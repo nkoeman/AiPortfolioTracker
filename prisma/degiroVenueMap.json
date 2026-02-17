@@ -1,0 +1,56 @@
+[
+  { "beurs": "EAM", "exchange": "Euronext Amsterdam", "mic": "XAMS", "country": "NL" },
+
+  { "beurs": "EPA", "exchange": "Euronext Paris", "mic": "XPAR", "country": "FR" },
+
+  { "beurs": "EBR", "exchange": "Euronext Brussels", "mic": "XBRU", "country": "BE" },
+
+  { "beurs": "ELI", "exchange": "Euronext Lisbon", "mic": "XLIS", "country": "PT" },
+
+  { "beurs": "EIR", "exchange": "Euronext Dublin", "mic": "XDUB", "country": "IE" },
+
+  { "beurs": "XET", "exchange": "Xetra", "mic": "XETR", "country": "DE" },
+  { "beurs": "FRA", "exchange": "Frankfurt Stock Exchange", "mic": "XFRA", "country": "DE" },
+  { "beurs": "STU", "exchange": "Stuttgart Stock Exchange", "mic": "XSTU", "country": "DE" },
+  { "beurs": "MUN", "exchange": "Munich Stock Exchange", "mic": "XMUN", "country": "DE" },
+  { "beurs": "HAM", "exchange": "Hamburg Stock Exchange", "mic": "XHAM", "country": "DE" },
+  { "beurs": "HAN", "exchange": "Hanover Stock Exchange", "mic": "XHAN", "country": "DE" },
+  { "beurs": "DUS", "exchange": "Dusseldorf Stock Exchange", "mic": "XDUS", "country": "DE" },
+  { "beurs": "BER", "exchange": "Berlin Stock Exchange", "mic": "XBER", "country": "DE" },
+
+  { "beurs": "MIL", "exchange": "Borsa Italiana", "mic": "XMIL", "country": "IT" },
+
+  { "beurs": "MAD", "exchange": "Bolsa de Madrid", "mic": "XMAD", "country": "ES" },
+
+  { "beurs": "SWX", "exchange": "SIX Swiss Exchange", "mic": "XSWX", "country": "CH" },
+
+  { "beurs": "LSE", "exchange": "London Stock Exchange", "mic": "XLON", "country": "GB" },
+  { "beurs": "LON", "exchange": "London Stock Exchange", "mic": "XLON", "country": "GB" },
+  { "beurs": "AIM", "exchange": "AIM London", "mic": "XAIM", "country": "GB" },
+
+  { "beurs": "NSY", "exchange": "New York Stock Exchange", "mic": "XNYS", "country": "US" },
+  { "beurs": "NYQ", "exchange": "New York Stock Exchange", "mic": "XNYS", "country": "US" },
+  { "beurs": "NDQ", "exchange": "NASDAQ", "mic": "XNAS", "country": "US" },
+  { "beurs": "NAS", "exchange": "NASDAQ", "mic": "XNAS", "country": "US" },
+  { "beurs": "AMX", "exchange": "NYSE American", "mic": "XASE", "country": "US" },
+  { "beurs": "BATS", "exchange": "Cboe BZX", "mic": "BATS", "country": "US" },
+
+  { "beurs": "TOR", "exchange": "Toronto Stock Exchange", "mic": "XTSE", "country": "CA" },
+  { "beurs": "TSX", "exchange": "Toronto Stock Exchange", "mic": "XTSE", "country": "CA" },
+
+  { "beurs": "STO", "exchange": "Nasdaq Stockholm", "mic": "XSTO", "country": "SE" },
+
+  { "beurs": "CPH", "exchange": "Nasdaq Copenhagen", "mic": "XCSE", "country": "DK" },
+
+  { "beurs": "HEL", "exchange": "Nasdaq Helsinki", "mic": "XHEL", "country": "FI" },
+
+  { "beurs": "OSL", "exchange": "Oslo Bors", "mic": "XOSL", "country": "NO" },
+
+  { "beurs": "VIE", "exchange": "Vienna Stock Exchange", "mic": "XWBO", "country": "AT" },
+
+  { "beurs": "WSE", "exchange": "Warsaw Stock Exchange", "mic": "XWAR", "country": "PL" },
+
+  { "beurs": "TSE", "exchange": "Tokyo Stock Exchange", "mic": "XTKS", "country": "JP" },
+
+  { "beurs": "HKG", "exchange": "Hong Kong Stock Exchange", "mic": "XHKG", "country": "HK" }
+]

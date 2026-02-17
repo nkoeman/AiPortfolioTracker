@@ -1,0 +1,13 @@
+{
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/auth/register/route": "app/api/auth/register/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/login/page": "app/login/page.js",
+  "/page": "app/page.js",
+  "/import/page": "app/import/page.js",
+  "/register/page": "app/register/page.js",
+  "/api/import/route": "app/api/import/route.js",
+  "/api/admin/sync-exchanges/route": "app/api/admin/sync-exchanges/route.js",
+  "/api/sync-prices/route": "app/api/sync-prices/route.js"
+}
