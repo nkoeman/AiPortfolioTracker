@@ -1,5 +1,62 @@
 # Portfolio Tracker - Implemented Functionality and Logic
 
+## 0. Parallel threads playbook
+Use this section when multiple engineers/agents work at the same time.
+
+### 0.1 Non-negotiable invariants
+- Do not change pricing, FX conversion, transaction interpretation, or valuation formulas unless explicitly scoped.
+- Keep sync pipeline order intact:
+  1. Price sync
+  2. FX sync
+  3. Daily portfolio valuation recompute
+- Keep runtime canonical valuation source as `DailyPortfolioValue`.
+- Keep imports and sync best-effort: enrichment failures must never block core import/sync.
+
+### 0.2 Suggested thread ownership
+- Thread A: ingestion + sync
+  - `src/lib/prices/**`
+  - `src/lib/fx/**`
+  - `src/app/api/sync-prices/**`
+- Thread B: valuation + analytics
+  - `src/lib/portfolio/**`
+  - `src/lib/valuation/**`
+  - `src/lib/dashboard/**`
+- Thread C: issuer enrichment
+  - `src/lib/ishares/**`
+  - `src/lib/etf/**`
+  - `src/app/api/admin/enrich-ishares/**`
+- Thread D: UI-only changes
+  - `src/components/**`
+  - `src/app/**/page.tsx`
+  - `src/app/globals.css`
+
+### 0.3 High-conflict files (single owner per PR)
+- `prisma/schema.prisma`
+- `src/lib/prisma.ts`
+- `src/lib/prices/sync.ts`
+- `src/app/layout.tsx`
+- `src/app/page.tsx`
+- `src/components/AppShell.tsx`
+
+### 0.4 Merge protocol
+- Rebase each thread branch before merge; resolve conflicts locally and rerun smoke checks.
+- Never mix schema migration changes with large UI restyling in one PR.
+- If touching `prisma/schema.prisma`, include migration + deploy command notes.
+- Prefer additive API changes over route behavior changes unless explicitly required.
+
+### 0.5 Minimum smoke checks before merge
+- `docker compose up --build -d`
+- `docker compose exec -T web npm run build`
+- `docker compose exec -T web npx prisma migrate deploy`
+- `docker compose exec -T web curl -s http://localhost:3000/api/sync-prices/recent -X POST` (authenticated path can be validated through UI/session flow)
+
+### 0.6 Required handoff note in PR description
+- Scope completed
+- Files touched
+- Invariants verified
+- Any DB migration included
+- Any known risk/follow-up
+
 ## 1. What the app does
 The app imports DeGiro transactions, maps instruments to exchange listings, syncs market prices and FX rates, computes portfolio valuation series, and shows portfolio analytics across:
 - `Performance` (`/`)
@@ -46,6 +103,7 @@ Main performance page with:
 
 ### 4.2 `/portfolio` (Portfolio)
 Portfolio composition page with:
+- Top card: `Portfolio exposure` pie chart module (single-chart view switcher: Region / Development / Country / Sector)
 - Open positions overview table
 - Closed positions overview table
 - Server-side sorting support for open positions via query params
@@ -76,6 +134,10 @@ Transactions page with:
 - `POST /api/sync-prices/daily`: alias of recent sync
 - `POST /api/sync-prices/weekly`: alias of full sync
 - `POST /api/admin/sync-exchanges`: refresh EODHD exchange directory
+- `POST /api/admin/enrich-ishares`: issuer exposure enrichment for user holdings (now includes post-run normalization backfill)
+- `POST /api/admin/enrich-vaneck`: VanEck exposure enrichment for user holdings
+- `POST /api/admin/normalize-exposure`: manual exposure normalization backfill trigger
+- `GET /api/portfolio/exposure`: aggregated portfolio exposure analytics payload (region/development/country/sector)
 
 ## 6. Prisma data model (runtime-relevant)
 
@@ -99,6 +161,7 @@ Transactions page with:
 - `PortfolioAiSummary`
 - `InstrumentEnrichment`
 - `InstrumentProfile`
+- `InstrumentExposureSnapshot` (raw + normalized exposure payloads, versioned normalization metadata)
 
 ### 6.5 Concurrency
 - `SyncLock` (server-side sync lock)
@@ -218,15 +281,28 @@ This derived weekly series is used in runtime reads (charts and recent analytics
 - Shows one quote-style one-liner + up to 5 bullets
 
 ## 15. Portfolio page logic (`/portfolio`)
+- Renders `Portfolio exposure` card first, before positions tables
 - Builds open positions from transactions + mapped listings + price/FX data
 - Calculates market value, total P&L, YTD P&L and YTD%
 - Builds closed positions when net quantity returns to ~0
 - Uses existing table style (`.table`) and server-side sort query params
 
+### 15.1 Portfolio exposure module
+- Fetches `GET /api/portfolio/exposure` and shows one pie chart at a time with dropdown switching:
+  - Region
+  - Development
+  - Country
+  - Sector
+- Supports hover/tap tooltip and active-slice highlighting
+- Shows coverage metadata (`Exposure coverage`, `No data`, `As of`)
+- Handles partial exposure coverage by including a `No data` slice to keep chart totals at 100%
+- Uses normalized exposure snapshots; raw labels remain stored for audit/debug
+
 ## 16. Transactions page logic (`/import`)
 - Data update controls:
   - `Sync last 4 weeks`
   - `Full sync`
+  - `Sync iShares enrichment` (includes normalization pass after enrichment)
 - CSV import form (`POST /api/import`)
 - Full transaction table in same style as open positions
 

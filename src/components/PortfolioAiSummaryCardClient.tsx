@@ -101,7 +101,7 @@ export function PortfolioAiSummaryCardClient() {
           <div className="row">
             <div>
               <div className="section-title">Monthly Briefing</div>
-              <h2>AI Portfolio insights</h2>
+              <h2>What happend in your portfolio</h2>
               <small>Pattern-based analysis of recent performance. Not financial advice.</small>
             </div>
           </div>
@@ -114,7 +114,7 @@ export function PortfolioAiSummaryCardClient() {
       return (
         <div className="card stack">
           <div className="section-title">Monthly Briefing</div>
-          <h2>AI Portfolio insights</h2>
+          <h2>What happend in your portfolio</h2>
           <small>Pattern-based analysis of recent performance. Not financial advice.</small>
           <p>AI insights currently unavailable.</p>
         </div>

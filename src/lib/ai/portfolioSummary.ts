@@ -58,7 +58,7 @@ type InstrumentMeta = {
   marketSector: string | null;
 };
 
-const PROMPT_VERSION = "v4";
+const PROMPT_VERSION = "v5";
 const DEFAULT_MODEL = "gpt-4o-mini";
 const DEFAULT_TEMPERATURE = 0.2;
 
@@ -134,12 +134,62 @@ function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
+const COMMON_ABBREVIATIONS = new Set([
+  "mr.",
+  "mrs.",
+  "ms.",
+  "dr.",
+  "prof.",
+  "sr.",
+  "jr.",
+  "st.",
+  "vs.",
+  "etc.",
+  "e.g.",
+  "i.e.",
+  "u.s.",
+  "u.k."
+]);
+
+function isAbbreviationDot(text: string, index: number) {
+  if (text[index] !== ".") return false;
+  const before = text.slice(0, index + 1);
+  if (/\b(?:[A-Za-z]\.){2,}$/.test(before)) return true;
+
+  const tokenMatch = before.match(/([A-Za-z.]+)$/);
+  const token = tokenMatch?.[1]?.toLowerCase() ?? "";
+  if (token && COMMON_ABBREVIATIONS.has(token)) return true;
+
+  const prev = text[index - 1] ?? "";
+  const next = text[index + 1] ?? "";
+  if (/\d/.test(prev) && /\d/.test(next)) return true;
+  if (/[A-Z]/.test(prev) && /[A-Z]/.test(next)) return true;
+  return false;
+}
+
+function isSentenceTerminator(text: string, index: number) {
+  const ch = text[index];
+  if (ch !== "." && ch !== "!" && ch !== "?") return false;
+
+  const rest = text.slice(index + 1).trimStart();
+  if (!rest) return true;
+  if (ch === "." && isAbbreviationDot(text, index)) return false;
+  if (ch === "!" || ch === "?") return true;
+
+  const first = rest[0];
+  return /[A-Z"'([{]/.test(first);
+}
+
 function extractFirstSentence(value: string) {
   const normalized = normalizeWhitespace(value);
   if (!normalized) return "";
-  const match = normalized.match(/^[^.!?]*[.!?]/);
-  if (match) return match[0].trim();
-  return `${normalized}.`;
+  for (let i = 0; i < normalized.length; i += 1) {
+    if (!isSentenceTerminator(normalized, i)) continue;
+    const rest = normalized.slice(i + 1).trimStart();
+    if (rest) return normalized.slice(0, i + 1).trim();
+    return normalized;
+  }
+  return normalized;
 }
 
 function clampOneLiner(value: string) {
@@ -148,8 +198,15 @@ function clampOneLiner(value: string) {
     sentence = `${sentence}.`;
   }
   if (sentence.length > 180) {
-    const trimmed = sentence.slice(0, 179).trimEnd();
-    sentence = trimmed.endsWith(".") || trimmed.endsWith("!") || trimmed.endsWith("?") ? trimmed : `${trimmed}.`;
+    const clipped = sentence.slice(0, 180).trimEnd();
+    const lastPunct = Math.max(clipped.lastIndexOf("."), clipped.lastIndexOf("!"), clipped.lastIndexOf("?"));
+    if (lastPunct >= 80) {
+      sentence = clipped.slice(0, lastPunct + 1).trim();
+    } else {
+      const lastSpace = clipped.lastIndexOf(" ");
+      const base = (lastSpace > 0 ? clipped.slice(0, lastSpace) : clipped).trimEnd();
+      sentence = base.endsWith(".") || base.endsWith("!") || base.endsWith("?") ? base : `${base}.`;
+    }
   }
   return sentence;
 }
@@ -165,21 +222,17 @@ function clampBullets(items: string[]) {
 function isSingleSentence(value: string) {
   const normalized = normalizeWhitespace(value);
   if (!normalized) return false;
-  if (/[.!?]$/.test(normalized) === false) return false;
-  const chars = normalized.split("");
-  const lastIndex = chars.length - 1;
-  for (let i = 0; i < chars.length; i += 1) {
-    const ch = chars[i];
-    if (ch !== "." && ch !== "!" && ch !== "?") continue;
-    if (i === lastIndex) continue;
-    const rest = normalized.slice(i + 1).trimStart();
-    if (!rest) continue;
-    const nextChar = rest[0];
-    if (nextChar >= "A" && nextChar <= "Z") {
-      return false;
-    }
+  let terminators = 0;
+  let lastTerminatorIndex = -1;
+  for (let i = 0; i < normalized.length; i += 1) {
+    if (!isSentenceTerminator(normalized, i)) continue;
+    terminators += 1;
+    lastTerminatorIndex = i;
+    if (terminators > 1) return false;
   }
-  return true;
+  if (terminators !== 1) return false;
+  const tail = normalized.slice(lastTerminatorIndex + 1).trim();
+  return tail.length === 0;
 }
 
 function validateSummary(summary: PortfolioAiSummaryJson) {

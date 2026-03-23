@@ -2,7 +2,16 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { format, startOfDay, startOfYear } from "date-fns";
 import { ClosedPositionsTable, ClosedPositionRow } from "@/components/ClosedPositionsTable";
-import { OpenPositionsTable, OpenPositionRow, OpenPositionColumn } from "@/components/OpenPositionsTable";
+import {
+  OpenPositionsTable,
+  OpenPositionRow,
+  OpenPositionColumn,
+  OpenPositionsTotals
+} from "@/components/OpenPositionsTable";
+import { PortfolioExposureCharts } from "@/components/PortfolioExposureCharts";
+import { PageContainer } from "@/components/layout/PageContainer";
+import { Section } from "@/components/layout/Section";
+import { Card } from "@/components/layout/Card";
 import { authOptions } from "@/lib/auth/options";
 import { getFxRateForWeek } from "@/lib/fx/convert";
 import { prisma } from "@/lib/prisma";
@@ -35,6 +44,17 @@ function toNumber(value: unknown) {
   if (value === null || value === undefined) return 0;
   if (typeof value === "number") return value;
   return Number(value);
+}
+
+function sumNullable(values: Array<number | null>) {
+  let total = 0;
+  let hasValue = false;
+  for (const value of values) {
+    if (typeof value !== "number" || !Number.isFinite(value)) continue;
+    total += value;
+    hasValue = true;
+  }
+  return hasValue ? total : null;
 }
 
 function buildProfileTags(profile: { assetType: string; region: string; trackedIndexName: string | null } | null) {
@@ -164,11 +184,15 @@ export default async function PortfolioPage({
 
   if (!transactions.length) {
     return (
-      <div className="card auth-card">
-        <div className="section-title">Portfolio</div>
-        <h1>Portfolio</h1>
-        <p>No transactions yet. Import your DeGiro CSV to get started.</p>
-      </div>
+      <PageContainer>
+        <Section>
+          <Card className="auth-card">
+            <div className="section-title">Portfolio</div>
+            <h1>Portfolio</h1>
+            <p>No transactions yet. Import your DeGiro CSV to get started.</p>
+          </Card>
+        </Section>
+      </PageContainer>
     );
   }
 
@@ -403,37 +427,70 @@ export default async function PortfolioPage({
     { key: "ytdPct", label: "% YTD" }
   ];
 
+  const latestPortfolioValue = await prisma.dailyPortfolioValue.findFirst({
+    where: { userId: user.id },
+    orderBy: { date: "desc" },
+    select: { valueEur: true }
+  });
+
+  const summedOpenMarketValue = sumNullable(rows.map((row) => row.marketValueEur));
+  const marketValueTotalEur =
+    latestPortfolioValue?.valueEur !== undefined && latestPortfolioValue?.valueEur !== null
+      ? toNumber(latestPortfolioValue.valueEur)
+      : summedOpenMarketValue;
+  const totalPnlTotalEur = sumNullable(rows.map((row) => row.totalPnlEur));
+  const ytdPnlTotalEur = sumNullable(rows.map((row) => row.ytdPnlEur));
+  const ytdBaseValueEur =
+    marketValueTotalEur !== null && ytdPnlTotalEur !== null ? marketValueTotalEur - ytdPnlTotalEur : null;
+  const ytdPctTotal =
+    ytdBaseValueEur !== null && ytdBaseValueEur !== 0 && ytdPnlTotalEur !== null
+      ? ytdPnlTotalEur / ytdBaseValueEur
+      : null;
+  const totals: OpenPositionsTotals = {
+    positionCount: rows.length,
+    marketValueEur: marketValueTotalEur,
+    totalPnlEur: totalPnlTotalEur,
+    ytdPnlEur: ytdPnlTotalEur,
+    ytdPct: ytdPctTotal
+  };
+
   return (
-    <div className="stack-lg">
-      <div className="card row">
-        <div>
-          <div className="section-title">Portfolio</div>
-          <h2>Portfolio</h2>
-          {unmappedCount > 0 ? (
-            <small className="warning-text">
-              Some instruments could not be mapped; they are excluded from valuation until mapping succeeds automatically.
-            </small>
-          ) : null}
-        </div>
-      </div>
+    <PageContainer>
+      <div className="page-stack">
+        <Section>
+          <Card>
+            <PortfolioExposureCharts />
+          </Card>
+        </Section>
 
-      <div className="card">
-        <div className="section-title">Portfolio Drivers</div>
-        <h2>Open Positions</h2>
-        <OpenPositionsTable
-          rows={rows}
-          columns={columns}
-          sortKey={sortKey}
-          sortDir={sortDir}
-          basePath="/portfolio"
-        />
-      </div>
+        <Section>
+          <Card>
+            <div className="section-title">Portfolio Drivers</div>
+            <h2>Open Positions</h2>
+            {unmappedCount > 0 ? (
+              <small className="warning-text">
+                Some instruments could not be mapped; they are excluded from valuation until mapping succeeds automatically.
+              </small>
+            ) : null}
+            <OpenPositionsTable
+              rows={rows}
+              columns={columns}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              basePath="/portfolio"
+              totals={totals}
+            />
+          </Card>
+        </Section>
 
-      <div className="card">
-        <div className="section-title">Risk Summary</div>
-        <h2>Closed Positions</h2>
-        <ClosedPositionsTable rows={closedPositions} />
+        <Section>
+          <Card>
+            <div className="section-title">Risk Summary</div>
+            <h2>Closed Positions</h2>
+            <ClosedPositionsTable rows={closedPositions} />
+          </Card>
+        </Section>
       </div>
-    </div>
+    </PageContainer>
   );
 }

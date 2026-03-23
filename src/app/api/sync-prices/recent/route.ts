@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth/options";
+import { kickoffIsharesExposureSnapshots } from "@/lib/ishares/ensureIsharesExposure";
 import { prisma } from "@/lib/prisma";
 import { syncLast4WeeksForUser } from "@/lib/prices/sync";
 import { withSyncLock } from "@/lib/prices/syncLock";
@@ -26,6 +27,7 @@ export async function POST() {
     if (!lock.acquired) {
       return NextResponse.json({ error: "A price sync is already running." }, { status: 409 });
     }
+    kickoffIsharesExposureSnapshots({ userId: user.id });
     return NextResponse.json({ ok: true, result: lock.result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Recent sync failed.";

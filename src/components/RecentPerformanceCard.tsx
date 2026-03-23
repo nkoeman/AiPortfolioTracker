@@ -1,31 +1,13 @@
 "use client";
 
-import React from "react";
-import type { RecentPerformanceResult } from "@/lib/dashboard/recentPerformance";
-import type { DailyPortfolioSeries } from "@/lib/portfolio/getOrCreateDailyPortfolioSeries";
-
-const eurFormatter = new Intl.NumberFormat("en-GB", {
-  style: "currency",
-  currency: "EUR",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2
-});
-
-const pctFormatter = new Intl.NumberFormat("en-GB", {
-  style: "percent",
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2
-});
-
-function formatEur(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "-";
-  return eurFormatter.format(value);
-}
-
-function formatPct(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "-";
-  return pctFormatter.format(value);
-}
+import React, { useMemo, useState } from "react";
+import { SelectMenu } from "@/components/SelectMenu";
+import { TopMoversBarChart } from "@/components/TopMoversBarChart";
+import {
+  PERFORMANCE_RANGE_LABELS,
+  type PerformanceRangeOption
+} from "@/lib/charts/performanceRange";
+import type { TopMoversRangeResult } from "@/lib/dashboard/topMoversByRange";
 
 function formatDate(value: Date | null | undefined) {
   if (!value) return "-";
@@ -35,50 +17,36 @@ function formatDate(value: Date | null | undefined) {
 }
 
 type RecentPerformanceCardProps = {
-  data: RecentPerformanceResult;
-  dailySeries: DailyPortfolioSeries;
+  moversByRange: Record<PerformanceRangeOption, TopMoversRangeResult>;
 };
 
-export function RecentPerformanceCard({ data, dailySeries }: RecentPerformanceCardProps) {
-  const changeTone =
-    data.portfolio.valueGainedEur === null
-      ? "tone-muted"
-      : data.portfolio.valueGainedEur < 0
-        ? "tone-negative"
-        : "tone-positive";
-  const hasHistory = data.window.weeksCount > 0;
-  const investedEur = data.portfolio.netFlowEur;
+export function RecentPerformanceCard({ moversByRange }: RecentPerformanceCardProps) {
+  const [range, setRange] = useState<PerformanceRangeOption>("max");
+  const data = moversByRange[range];
+  const hasHistory = Boolean(data?.window.startDate && data?.window.endDate);
+  const options = useMemo(
+    () =>
+      (Object.keys(PERFORMANCE_RANGE_LABELS) as PerformanceRangeOption[]).map((value) => ({
+        value,
+        label: PERFORMANCE_RANGE_LABELS[value]
+      })),
+    []
+  );
 
   return (
-    <div className="card stack">
+    <div className="card stack recent-performance-card">
       <div className="row">
         <div>
-          <div className="section-title">Portfolio Drivers</div>
-          <h2>Last 4 Weeks</h2>
-          <small>Daily values (EUR) and organic return</small>
-          {data.notes.length ? (
-            <div className="note-list">
-              {data.notes.map((note) => (
-                <small key={note}>
-                  {note}
-                </small>
-              ))}
-            </div>
-          ) : null}
+          <h2>Gainers &amp; losers</h2>
         </div>
-        <div className="text-right">
-          <div className={`${changeTone} metric-emphasis`}>
-            {data.portfolio.valueGainedEur === null
-              ? "Value gained: -"
-              : `Value gained: ${formatEur(data.portfolio.valueGainedEur)} (${formatPct(
-                  data.portfolio.valueGainedPct
-                )})`}
-          </div>
-          <small>
-            Start: {formatEur(data.portfolio.startValueEur)} | End: {formatEur(data.portfolio.endValueEur)}
-          </small>
-          <br />
-          <small>Invested in period: {formatEur(investedEur)}</small>
+        <div className="minw-160 portfolio-control">
+          <SelectMenu
+            id="gainers-losers-range"
+            ariaLabel="Gainers and losers range"
+            value={range}
+            options={options}
+            onChange={(nextValue) => setRange(nextValue as PerformanceRangeOption)}
+          />
         </div>
       </div>
 
@@ -86,76 +54,21 @@ export function RecentPerformanceCard({ data, dailySeries }: RecentPerformanceCa
         <div>
           <p>Not enough history yet. Import transactions and sync prices to build history.</p>
         </div>
-      ) : (
-        <div className="stack">
-          <small>
-            Window: {formatDate(data.window.startWeekEndDate)} to {formatDate(data.window.endWeekEndDate)}
-          </small>
-          {dailySeries.lastUpdatedAt ? (
-            <small className="tone-muted">Last updated: {formatDate(dailySeries.lastUpdatedAt)}</small>
-          ) : null}
-        </div>
-      )}
+      ) : null}
 
       <div className="stack">
-        <div className="row">
-          <h3>Top contributors</h3>
-          {data.approximationNote ? (
-            <small title={data.approximationNote}>Approximate</small>
+        <TopMoversBarChart
+          topGainers={data.contributors.topGainers}
+          topLosers={data.contributors.topLosers}
+        />
+        <div className="top-movers-meta">
+          <small>
+            Window: {formatDate(data.window.startDate)} to {formatDate(data.window.endDate)} ({data.granularity})
+          </small>
+          {data.lastUpdatedAt ? (
+            <small className="tone-muted">Last updated: {formatDate(data.lastUpdatedAt)}</small>
           ) : null}
         </div>
-        {data.contributors.topGainers.length === 0 && data.contributors.topLosers.length === 0 ? (
-          <small>No contribution data available yet.</small>
-        ) : (
-          <div className="contributors-grid">
-            <div>
-              <small className="section-title">Top gainers</small>
-              <div className="contributors-stack">
-                {data.contributors.topGainers.length ? (
-                  data.contributors.topGainers.map((row) => (
-                    <div key={row.instrumentId} className="row row-tight">
-                      <div>
-                        <div>{row.instrumentName}</div>
-                        <small>{row.isin}</small>
-                      </div>
-                      <div className="tone-positive text-right">
-                        <div>{formatEur(row.contributionEur)}</div>
-                        {row.contributionPctOfMove !== null ? (
-                          <small>{formatPct(row.contributionPctOfMove)} of move</small>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <small>No positive contributors.</small>
-                )}
-              </div>
-            </div>
-            <div>
-              <small className="section-title">Top losers</small>
-              <div className="contributors-stack">
-                {data.contributors.topLosers.length ? (
-                  data.contributors.topLosers.map((row) => (
-                    <div key={row.instrumentId} className="row row-tight">
-                      <div>
-                        <div>{row.instrumentName}</div>
-                        <small>{row.isin}</small>
-                      </div>
-                      <div className="tone-negative text-right">
-                        <div>{formatEur(row.contributionEur)}</div>
-                        {row.contributionPctOfMove !== null ? (
-                          <small>{formatPct(row.contributionPctOfMove)} of move</small>
-                        ) : null}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <small>No negative contributors.</small>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

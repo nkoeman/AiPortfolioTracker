@@ -20,6 +20,19 @@ enum EnrichmentStatus {
   FAILED
 }
 
+enum ExposureSource {
+  ISHARES
+  VANGUARD
+  SPDR
+  COMGEST
+  VANECK
+}
+
+enum ExposureStatus {
+  READY
+  FAILED
+}
+
 enum PortfolioAiSummaryStatus {
   READY
   FAILED
@@ -102,6 +115,7 @@ model Instrument {
   listings     InstrumentListing[]
   enrichments  InstrumentEnrichment[]
   profile      InstrumentProfile?
+  exposureSnapshots InstrumentExposureSnapshot[]
 }
 
 model InstrumentListing {
@@ -140,6 +154,7 @@ model Transaction {
   tradeAt       DateTime
   quantity      Decimal           @db.Decimal(20, 8)
   price         Decimal?          @db.Decimal(20, 8)
+  transactionCosts Decimal?       @db.Decimal(20, 8)
   valueEur      Decimal?          @db.Decimal(20, 8)
   totalEur      Decimal?          @db.Decimal(20, 8)
   currency      String            @default("EUR")
@@ -180,6 +195,7 @@ model DailyPortfolioValue {
   userId               String
   date                 DateTime @db.Date
   valueEur             Decimal  @db.Decimal(20, 8)
+  cumulativeReturnAmountEur Decimal? @db.Decimal(20, 8)
   netExternalFlowEur   Decimal  @db.Decimal(20, 8) @default(0)
   periodReturnPct      Decimal? @db.Decimal(20, 10)
   returnIndex          Decimal? @db.Decimal(20, 10)
@@ -296,4 +312,30 @@ model InstrumentProfile {
 
   @@index([assetType, assetClass])
   @@index([region])
+}
+
+model InstrumentExposureSnapshot {
+  id           String         @id @default(cuid())
+  instrumentId String
+  source       ExposureSource
+  status       ExposureStatus
+
+  asOfDate     DateTime?      @db.Date
+  fetchedAt    DateTime       @default(now())
+  expiresAt    DateTime
+
+  payload      Json?
+  normalizedPayload Json?
+  normalizerVersion String?
+  coverageMeta Json?
+  sourceMeta   Json?
+  errorMessage String?
+
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  instrument Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, source])
+  @@index([source, status])
 }

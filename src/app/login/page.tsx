@@ -41,8 +41,6 @@ export default function LoginPage() {
               priority
             />
           </div>
-          <h1>Sign in</h1>
-          <small>Access your Chief Capital briefing workspace.</small>
           <form onSubmit={onSubmit}>
             <label>
               Email

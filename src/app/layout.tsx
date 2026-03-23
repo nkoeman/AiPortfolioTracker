@@ -29,7 +29,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body className={inter.variable}>
         <Providers>
-          <AppShell sessionEmail={session?.user?.email ?? null} hasSession={Boolean(session)}>
+          <AppShell hasSession={Boolean(session)}>
             {children}
           </AppShell>
         </Providers>

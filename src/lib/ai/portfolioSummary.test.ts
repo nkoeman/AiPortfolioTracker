@@ -140,7 +140,7 @@ describe("portfolio AI summary", () => {
       updatedAt: new Date("2026-02-03T00:00:00.000Z"),
       model: "gpt-test",
       temperature: 0.2,
-      promptVersion: "v4"
+      promptVersion: "v5"
     });
 
     const result = await getOrCreatePortfolioAiSummary("user_1", recent, 4);
@@ -166,7 +166,7 @@ describe("portfolio AI summary", () => {
       updatedAt: new Date("2026-02-03T00:00:00.000Z"),
       model: "gpt-test",
       temperature: 0.2,
-      promptVersion: "v4"
+      promptVersion: "v5"
     });
 
     const result = await getOrCreatePortfolioAiSummary("user_1");
@@ -196,7 +196,7 @@ describe("portfolio AI summary", () => {
       updatedAt: new Date("2026-02-03T00:00:00.000Z"),
       model: "gpt-test",
       temperature: 0.2,
-      promptVersion: "v4"
+      promptVersion: "v5"
     });
 
     const result = await getOrCreatePortfolioAiSummary("user_1", recent, 4);
@@ -227,7 +227,7 @@ describe("portfolio AI summary", () => {
       updatedAt: new Date("2026-02-03T00:00:00.000Z"),
       model: "gpt-test",
       temperature: 0.2,
-      promptVersion: "v4"
+      promptVersion: "v5"
     });
 
     const result = await getOrCreatePortfolioAiSummary("user_1", recent, 4);
@@ -254,6 +254,18 @@ describe("portfolio AI summary", () => {
 
     const sanitized = __testables.sanitizeSummary(raw);
     expect(sanitized.oneLiner).toBe("This is sentence one.");
+    expect(() => __testables.validateSummary(sanitized)).not.toThrow();
+  });
+
+  it("does not truncate acronyms like U.S. to U.", () => {
+    const raw = {
+      oneLiner:
+        "Recent gains appear driven by emerging markets exposure, while U.S. equity exposure modestly detracted.",
+      bullets: ["A bullet."]
+    };
+
+    const sanitized = __testables.sanitizeSummary(raw);
+    expect(sanitized.oneLiner).toBe(raw.oneLiner);
     expect(() => __testables.validateSummary(sanitized)).not.toThrow();
   });
 

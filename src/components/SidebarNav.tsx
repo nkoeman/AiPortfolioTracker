@@ -9,7 +9,11 @@ const LINKS = [
   { href: "/import", label: "Transactions" }
 ];
 
-export function SidebarNav() {
+type SidebarNavProps = {
+  onNavigate?: () => void;
+};
+
+export function SidebarNav({ onNavigate }: SidebarNavProps) {
   const pathname = usePathname();
 
   return (
@@ -22,6 +26,7 @@ export function SidebarNav() {
             href={link.href}
             className={`sidebar-link${isActive ? " active" : ""}`}
             aria-current={isActive ? "page" : undefined}
+            onClick={onNavigate}
           >
             {link.label}
           </Link>

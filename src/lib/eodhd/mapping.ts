@@ -15,6 +15,14 @@ type ResolveParams = {
   transactionCurrency: string;
 };
 
+type ResolveSelectedExchangeParams = {
+  userId: string;
+  isin: string;
+  productName: string;
+  eodhdExchangeCode: string;
+  transactionCurrency: string;
+};
+
 type MappingContext = {
   userId: string;
   isin: string;
@@ -43,6 +51,14 @@ function buildFailedExchangeKey(beursCode: string) {
 function normalizeValue(value: string | null | undefined) {
   const normalized = String(value || "").trim().toUpperCase();
   return normalized || null;
+}
+
+function firstOperatingMic(value: string | null | undefined) {
+  const normalized = normalizeValue(value);
+  if (!normalized) return null;
+
+  const [first] = normalized.split(/[,\s|/]+/).filter(Boolean);
+  return first || null;
 }
 
 function candidateExchangeCode(candidate: EodhdListingCandidate) {
@@ -502,6 +518,165 @@ export async function resolveOrCreateListingForTransaction(params: ResolveParams
       beursCode,
       mic,
       `Automatic mapping failed: ${message}`
+    );
+
+    return null;
+  }
+}
+
+// Resolves a listing from an explicitly selected EODHD exchange code instead of the DeGiro beurs mapping path.
+export async function resolveOrCreateListingForSelectedExchange(
+  params: ResolveSelectedExchangeParams
+) {
+  const { userId, isin, productName, eodhdExchangeCode, transactionCurrency } = params;
+  const exchangeCode = normalizeValue(eodhdExchangeCode) || "UNKNOWN";
+
+  const exchangeRow = await prisma.eodhdExchange.findUnique({
+    where: { code: exchangeCode },
+    select: {
+      code: true,
+      name: true,
+      country: true,
+      currency: true,
+      operatingMICs: true
+    }
+  });
+
+  const context: MappingContext = {
+    userId,
+    isin,
+    productName,
+    degiroBeursCode: exchangeCode,
+    mic: firstOperatingMic(exchangeRow?.operatingMICs),
+    targetExchangeCode: exchangeCode,
+    candidates: []
+  };
+
+  if (!exchangeRow) {
+    const error = `Selected EODHD exchange ${exchangeCode} was not found in the local exchange directory`;
+    logMap("FAIL", "selected exchange missing from directory", { ...context, error }, "error");
+    await markListingFailed(isin, exchangeCode, exchangeCode, null, error);
+    return null;
+  }
+
+  const existing = await prisma.instrumentListing.findFirst({
+    where: {
+      isin,
+      exchangeCode,
+      mappingStatus: MappingStatus.MAPPED,
+      eodhdCode: { not: null }
+    }
+  });
+
+  if (existing) {
+    logMap("SELECT", "reused existing mapped listing from selected exchange", {
+      ...context,
+      listingId: existing.id,
+      eodhdCode: existing.eodhdCode
+    });
+    return existing;
+  }
+
+  try {
+    const candidates = await eodhdClient.searchByIsin(isin);
+    context.candidates = candidates.map((candidate) => candidate.eodhdCode).slice(0, 20);
+
+    logMap("EODHD", "manual candidates received", {
+      ...context,
+      candidateCount: candidates.length
+    });
+
+    if (!candidates.length) {
+      const error = `No EODHD candidates returned for ISIN ${isin}`;
+      logMap("FAIL", "no EODHD candidates returned", { ...context, error }, "error");
+      await markListingFailed(isin, exchangeCode, exchangeCode, context.mic, error);
+      return null;
+    }
+
+    const selection = selectBestEodhdCandidate({
+      candidates,
+      expectedSuffix: exchangeCode,
+      listingCountry: normalizeValue(exchangeRow.country),
+      listingCurrency: normalizeValue(transactionCurrency) || normalizeValue(exchangeRow.currency),
+      exchangeDirectory: buildExchangeDirectoryMap([
+        {
+          code: exchangeRow.code,
+          country: exchangeRow.country,
+          currency: exchangeRow.currency
+        }
+      ])
+    });
+
+    const selected = selection.candidate;
+    const selectedExchangeCode = selected ? candidateExchangeCode(selected) : null;
+
+    if (!selected || selection.reason !== "EXACT" || selectedExchangeCode !== exchangeCode) {
+      const error = `No EODHD candidate matched selected exchange ${exchangeCode} for ISIN ${isin}`;
+      logMap(
+        "FAIL",
+        "selected exchange could not be matched exactly",
+        {
+          ...context,
+          error,
+          selectionReason: selection.reason,
+          selectedEodhdCode: selected?.eodhdCode || null,
+          selectedExchangeCode
+        },
+        "warn"
+      );
+      await markListingFailed(isin, exchangeCode, exchangeCode, context.mic, error);
+      return null;
+    }
+
+    const listing = await prisma.instrumentListing.upsert({
+      where: {
+        isin_exchangeCode: {
+          isin,
+          exchangeCode
+        }
+      },
+      update: {
+        exchangeName: selected.exchangeName || exchangeRow.name || exchangeCode,
+        exchangeMic: context.mic,
+        degiroBeursCode: null,
+        eodhdCode: selected.eodhdCode,
+        currency: selected.currency || exchangeRow.currency,
+        mappingStatus: MappingStatus.MAPPED,
+        mappingError: null,
+        lastMappedAt: new Date()
+      },
+      create: {
+        isin,
+        exchangeName: selected.exchangeName || exchangeRow.name || exchangeCode,
+        exchangeCode,
+        exchangeMic: context.mic,
+        degiroBeursCode: null,
+        eodhdCode: selected.eodhdCode,
+        currency: selected.currency || exchangeRow.currency,
+        mappingStatus: MappingStatus.MAPPED,
+        mappingError: null,
+        lastMappedAt: new Date()
+      }
+    });
+
+    logMap("SELECT", "manual exchange candidate chosen", {
+      ...context,
+      listingId: listing.id,
+      selectedEodhdCode: selected.eodhdCode
+    });
+
+    await ensurePrimaryListing(isin);
+    return listing;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown listing mapping error";
+    logMap("FAIL", "manual listing mapping threw an error", { ...context, error: message }, "error");
+
+    await markListingFailed(
+      isin,
+      exchangeCode,
+      exchangeCode,
+      context.mic,
+      `Manual exchange mapping failed: ${message}`
     );
 
     return null;

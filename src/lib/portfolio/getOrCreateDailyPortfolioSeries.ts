@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getExternalCashFlowSeries } from "@/lib/portfolio/getNetExternalCashFlow";
+import { modifiedDietzReturn } from "@/lib/performance/dietz";
 
 type FxIndexRow = {
   weekEndDate: Date;
@@ -17,6 +18,7 @@ type HoldingsTx = {
 export type DailyPortfolioPoint = {
   date: Date;
   valueEur: number;
+  cumulativeReturnAmountEur: number | null;
   netExternalFlowEur: number;
   periodReturnPct: number | null;
   returnIndex: number | null;
@@ -33,6 +35,8 @@ export type DailyPortfolioSeries = {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_INPUT_VERSION = "v3";
+const DEFAULT_DIETZ_TIMING = "END_OF_DAY" as const;
+const FIRST_PERIOD_DIETZ_TIMING = "START_OF_DAY" as const;
 
 function startOfDay(value: Date) {
   return new Date(`${value.toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -44,6 +48,13 @@ function toIsoDate(value: Date) {
 
 function normalizeCurrency(value: string | null | undefined) {
   return String(value || "").trim().toUpperCase();
+}
+
+function toFiniteNumber(value: unknown) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function buildDateRange(start: Date, end: Date) {
@@ -120,22 +131,29 @@ export async function getOrCreateDailyPortfolioSeries(
   });
 
   if (!forceRecompute && existing.length === windowDates.length) {
-    const points = existing.map((row) => ({
-      date: row.date,
-      valueEur: Number(row.valueEur),
-      netExternalFlowEur: Number(row.netExternalFlowEur ?? 0),
-      periodReturnPct: row.periodReturnPct === null ? null : Number(row.periodReturnPct),
-      returnIndex: row.returnIndex === null ? null : Number(row.returnIndex),
-      cumulativeReturnPct: row.cumulativeReturnPct === null ? null : Number(row.cumulativeReturnPct),
-      partialValuation: Boolean(row.partialValuation)
-    }));
-    const lastUpdatedAt =
-      existing.reduce<Date | null>((latest, row) => {
-        if (!latest || row.computedAt > latest) return row.computedAt;
-        return latest;
-      }, null) || null;
+    const hasCumulativeAmountForWindow = existing.every(
+      (row) => row.cumulativeReturnAmountEur !== null && row.cumulativeReturnAmountEur !== undefined
+    );
+    if (hasCumulativeAmountForWindow) {
+      const points = existing.map((row) => ({
+        date: row.date,
+        valueEur: Number(row.valueEur),
+        cumulativeReturnAmountEur:
+          row.cumulativeReturnAmountEur == null ? null : Number(row.cumulativeReturnAmountEur),
+        netExternalFlowEur: Number(row.netExternalFlowEur ?? 0),
+        periodReturnPct: row.periodReturnPct == null ? null : Number(row.periodReturnPct),
+        returnIndex: row.returnIndex == null ? null : Number(row.returnIndex),
+        cumulativeReturnPct: row.cumulativeReturnPct == null ? null : Number(row.cumulativeReturnPct),
+        partialValuation: Boolean(row.partialValuation)
+      }));
+      const lastUpdatedAt =
+        existing.reduce<Date | null>((latest, row) => {
+          if (!latest || row.computedAt > latest) return row.computedAt;
+          return latest;
+        }, null) || null;
 
-    return { startDate, endDate, points, lastUpdatedAt };
+      return { startDate, endDate, points, lastUpdatedAt };
+    }
   }
 
   const previousDaily = await prisma.dailyPortfolioValue.findFirst({
@@ -154,6 +172,8 @@ export async function getOrCreateDailyPortfolioSeries(
       listingId: true,
       tradeAt: true,
       quantity: true,
+      valueEur: true,
+      totalEur: true,
       instrument: {
         select: {
           listings: {
@@ -272,7 +292,22 @@ export async function getOrCreateDailyPortfolioSeries(
   }
 
   holdingsTransactions.sort((a, b) => a.date.getTime() - b.date.getTime());
+  const investmentFlows = transactions
+    .map((tx) => {
+      const raw = toFiniteNumber(tx.valueEur ?? tx.totalEur);
+      const absValue = raw === null ? null : Math.abs(raw);
+      const qty = toFiniteNumber(tx.quantity);
+      if (absValue === null || qty === null) {
+        return { date: startOfDay(tx.tradeAt), flow: 0 };
+      }
+      if (qty > 0) return { date: startOfDay(tx.tradeAt), flow: absValue };
+      if (qty < 0) return { date: startOfDay(tx.tradeAt), flow: -absValue };
+      return { date: startOfDay(tx.tradeAt), flow: 0 };
+    })
+    .sort((a, b) => a.date.getTime() - b.date.getTime());
   let txIndex = 0;
+  let investmentFlowIndex = 0;
+  let cumulativeInvestedEur = 0;
   const holdings = new Map<string, number>();
   const priceCursor = new Map<
     string,
@@ -309,10 +344,19 @@ export async function getOrCreateDailyPortfolioSeries(
       : previousDaily
         ? 100
         : null;
+  let prevDateForReturn: Date | null = previousDaily ? startOfDay(previousDaily.date) : null;
   let missingPrices = 0;
   const points: DailyPortfolioPoint[] = [];
 
   for (const day of windowDates) {
+    while (
+      investmentFlowIndex < investmentFlows.length &&
+      investmentFlows[investmentFlowIndex].date.getTime() <= day.getTime()
+    ) {
+      cumulativeInvestedEur += investmentFlows[investmentFlowIndex].flow;
+      investmentFlowIndex += 1;
+    }
+
     while (txIndex < holdingsTransactions.length && holdingsTransactions[txIndex].date.getTime() <= day.getTime()) {
       const tx = holdingsTransactions[txIndex];
       holdings.set(tx.listingId, (holdings.get(tx.listingId) || 0) + tx.qty);
@@ -397,13 +441,67 @@ export async function getOrCreateDailyPortfolioSeries(
       totalValueEur += qty * priceValue * multiplier;
     }
 
+    const cumulativeReturnAmountEur = totalValueEur - cumulativeInvestedEur;
     const netExternalFlowEur = externalFlowByDate.get(toIsoDate(day)) ?? 0;
     const flowForReturn = -netExternalFlowEur;
+    const periodCashFlows = flowForReturn === 0 ? [] : [{ amountEur: flowForReturn, occurredAt: day }];
     let periodReturnPct: number | null = null;
     let returnIndex: number | null = null;
     if (prevValue !== null && prevValue > 0) {
-      periodReturnPct = (totalValueEur - flowForReturn) / prevValue - 1;
-      returnIndex = (prevIndex ?? 100) * (1 + periodReturnPct);
+      periodReturnPct = modifiedDietzReturn({
+        startValueEur: prevValue,
+        endValueEur: totalValueEur,
+        cashFlows: periodCashFlows,
+        periodStart: prevDateForReturn ?? new Date(day.getTime() - ONE_DAY_MS),
+        periodEnd: day,
+        timingAssumption: DEFAULT_DIETZ_TIMING
+      });
+      if (periodReturnPct !== null) {
+        returnIndex = (prevIndex ?? 100) * (1 + periodReturnPct);
+        console.info("[INDEX][CHAIN]", {
+          userId,
+          period: "DAILY",
+          date: toIsoDate(day),
+          prevIndex,
+          r: Number(periodReturnPct.toFixed(10)),
+          index: Number(returnIndex.toFixed(10))
+        });
+      } else {
+        returnIndex = prevIndex;
+      }
+    } else if (prevValue === null) {
+      periodReturnPct = modifiedDietzReturn({
+        startValueEur: 0,
+        endValueEur: totalValueEur,
+        cashFlows: periodCashFlows,
+        periodStart: day,
+        periodEnd: day,
+        timingAssumption: FIRST_PERIOD_DIETZ_TIMING
+      });
+      if (periodReturnPct !== null) {
+        returnIndex = 100 * (1 + periodReturnPct);
+        console.info("[INDEX][SEED]", {
+          userId,
+          period: "DAILY",
+          date: toIsoDate(day),
+          A: 0,
+          B: Number(totalValueEur.toFixed(8)),
+          F: Number(flowForReturn.toFixed(8)),
+          r: Number(periodReturnPct.toFixed(10)),
+          index: Number(returnIndex.toFixed(10)),
+          assumption: "FIRST_PERIOD_START"
+        });
+      } else {
+        console.warn("[INDEX][SEED] unable to compute first-period return", {
+          userId,
+          period: "DAILY",
+          date: toIsoDate(day),
+          A: 0,
+          B: Number(totalValueEur.toFixed(8)),
+          F: Number(flowForReturn.toFixed(8)),
+          assumption: "FIRST_PERIOD_START"
+        });
+      }
     } else {
       returnIndex = 100;
     }
@@ -427,6 +525,7 @@ export async function getOrCreateDailyPortfolioSeries(
       },
       update: {
         valueEur: Number(totalValueEur.toFixed(8)),
+        cumulativeReturnAmountEur: Number(cumulativeReturnAmountEur.toFixed(8)),
         netExternalFlowEur: Number(netExternalFlowEur.toFixed(8)),
         periodReturnPct: periodReturnPct === null ? null : Number(periodReturnPct.toFixed(10)),
         returnIndex: returnIndex === null ? null : Number(returnIndex.toFixed(10)),
@@ -439,6 +538,7 @@ export async function getOrCreateDailyPortfolioSeries(
         userId,
         date: day,
         valueEur: Number(totalValueEur.toFixed(8)),
+        cumulativeReturnAmountEur: Number(cumulativeReturnAmountEur.toFixed(8)),
         netExternalFlowEur: Number(netExternalFlowEur.toFixed(8)),
         periodReturnPct: periodReturnPct === null ? null : Number(periodReturnPct.toFixed(10)),
         returnIndex: returnIndex === null ? null : Number(returnIndex.toFixed(10)),
@@ -452,6 +552,7 @@ export async function getOrCreateDailyPortfolioSeries(
     points.push({
       date: day,
       valueEur: Number(totalValueEur.toFixed(8)),
+      cumulativeReturnAmountEur: Number(cumulativeReturnAmountEur.toFixed(8)),
       netExternalFlowEur: Number(netExternalFlowEur.toFixed(8)),
       periodReturnPct: periodReturnPct === null ? null : Number(periodReturnPct.toFixed(10)),
       returnIndex: returnIndex === null ? null : Number(returnIndex.toFixed(10)),
@@ -460,6 +561,7 @@ export async function getOrCreateDailyPortfolioSeries(
     });
     prevValue = totalValueEur;
     prevIndex = returnIndex;
+    prevDateForReturn = day;
   }
 
   console.info("[SYNC][DAILY_VALUE] computed", {

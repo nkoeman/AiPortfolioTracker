@@ -1,5 +1,8 @@
 import { ensureEodhdExchangeDirectoryLoaded } from "@/lib/eodhd/exchanges";
-import { resolveOrCreateListingForTransaction } from "@/lib/eodhd/mapping";
+import {
+  resolveOrCreateListingForSelectedExchange,
+  resolveOrCreateListingForTransaction
+} from "@/lib/eodhd/mapping";
 import { ensureWeeklyFxRates } from "@/lib/fx/sync";
 import { refreshDailyPortfolioValuesForUser } from "@/lib/valuation/dailyPortfolioValue";
 import { syncDailyPricesForUser } from "@/lib/prices/syncDailyPrices";
@@ -72,13 +75,23 @@ async function linkUnmappedTransactionsForUser(userId: string) {
 
   for (const tx of attempts.values()) {
     const beursCode = String(tx.exchangeCode || tx.exchange || "UNKNOWN").trim().toUpperCase() || "UNKNOWN";
-    const listing = await resolveOrCreateListingForTransaction({
-      userId,
-      isin: tx.instrument.isin,
-      productName: tx.instrument.name,
-      degiroBeursCode: beursCode,
-      transactionCurrency: tx.currency || "UNKNOWN"
-    });
+    const usesSelectedExchangeMapping =
+      String(tx.exchange || "").trim().toUpperCase() !== beursCode;
+    const listing = usesSelectedExchangeMapping
+      ? await resolveOrCreateListingForSelectedExchange({
+          userId,
+          isin: tx.instrument.isin,
+          productName: tx.instrument.name,
+          eodhdExchangeCode: beursCode,
+          transactionCurrency: tx.currency || "UNKNOWN"
+        })
+      : await resolveOrCreateListingForTransaction({
+          userId,
+          isin: tx.instrument.isin,
+          productName: tx.instrument.name,
+          degiroBeursCode: beursCode,
+          transactionCurrency: tx.currency || "UNKNOWN"
+        });
     if (!listing) continue;
 
     await prisma.transaction.updateMany({

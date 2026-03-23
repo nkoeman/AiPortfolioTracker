@@ -5,35 +5,12 @@ import { resolveOrCreateListingForTransaction } from "@/lib/eodhd/mapping";
 import { parseDegiroCsv } from "@/lib/import/degiroCsv";
 import { ensureInstrumentProfiles } from "@/lib/enrichment";
 import { enrichInstrumentsFromOpenFigi } from "@/lib/openfigi/enrich";
+import { kickoffIsharesExposureSnapshots } from "@/lib/ishares/ensureIsharesExposure";
 import { syncLast4WeeksForUser } from "@/lib/prices/sync";
 import { prisma } from "@/lib/prisma";
-import crypto from "crypto";
+import { buildTransactionUniqueKey } from "@/lib/transactions/buildUniqueKey";
 
 export const runtime = "nodejs";
-
-// Creates a deterministic fingerprint so duplicate transaction rows are ignored on re-import.
-function buildUniqueKey(
-  userId: string,
-  isin: string,
-  beursCode: string,
-  tradeAt: Date,
-  quantity: number,
-  price: number | null,
-  totalEur: number | null,
-  product: string
-) {
-  const raw = [
-    userId,
-    isin,
-    beursCode,
-    tradeAt.toISOString(),
-    quantity,
-    price ?? "",
-    totalEur ?? "",
-    product
-  ].join("|");
-  return crypto.createHash("sha256").update(raw).digest("hex");
-}
 
 // Imports a DeGiro CSV, resolves MIC-first listing mapping, and triggers background price sync.
 export async function POST(req: Request) {
@@ -122,6 +99,11 @@ export async function POST(req: Request) {
       });
     }
 
+    kickoffIsharesExposureSnapshots({
+      userId: user.id,
+      instrumentIds: Array.from(instrumentMap.values()).map((instrument) => instrument.id)
+    });
+
     const listingCache = new Map<string, string | null>();
 
     const prepared = [] as Array<{
@@ -175,7 +157,7 @@ export async function POST(req: Request) {
         exchange: beursCode,
         exchangeCode: beursCode,
         type: "TRADE",
-        uniqueKey: buildUniqueKey(
+        uniqueKey: buildTransactionUniqueKey(
           user.id,
           row.isin,
           beursCode,

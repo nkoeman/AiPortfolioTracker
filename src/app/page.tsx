@@ -1,15 +1,21 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
-import { addDays, format, startOfDay, startOfWeek } from "date-fns";
+import { format, startOfDay } from "date-fns";
 import { type PortfolioChartPoint } from "@/components/PortfolioChart";
 import { PortfolioAiSummaryCardClient } from "@/components/PortfolioAiSummaryCardClient";
 import { RecentPerformanceCard } from "@/components/RecentPerformanceCard";
 import { BrandMotif } from "@/components/BrandMotif";
 import { PortfolioValueCard } from "@/components/PortfolioValueCard";
+import { PageContainer } from "@/components/layout/PageContainer";
+import { Section } from "@/components/layout/Section";
 import { authOptions } from "@/lib/auth/options";
-import { getRecentPerformance } from "@/lib/dashboard/recentPerformance";
+import {
+  type PerformanceRangeOption
+} from "@/lib/charts/performanceRange";
+import { getTopMoversByRange } from "@/lib/dashboard/topMoversByRange";
 import { getOrCreateDailyPortfolioSeries } from "@/lib/portfolio/getOrCreateDailyPortfolioSeries";
 import { prisma } from "@/lib/prisma";
+import { ResponsiveShowcase } from "@/components/dev/ResponsiveShowcase";
 
 // Normalizes mixed numeric values to JavaScript numbers for calculations.
 function toNumber(value: unknown) {
@@ -21,44 +27,10 @@ function toNumber(value: unknown) {
 type DailyValuePoint = {
   date: Date;
   valueEur: number;
-  cumulativeReturnPct: number | null;
+  cumulativeReturnAmountEur: number | null;
+  returnIndex: number | null;
+  periodReturnPct: number | null;
 };
-
-function toIsoDate(value: Date) {
-  return value.toISOString().slice(0, 10);
-}
-
-function deriveWeeklyFridaySeries(dailyPoints: DailyValuePoint[]) {
-  const byWeek = new Map<string, { friday: Date; points: DailyValuePoint[] }>();
-  for (const point of dailyPoints) {
-    const day = startOfDay(point.date);
-    const weekStart = startOfWeek(day, { weekStartsOn: 1 });
-    const friday = addDays(weekStart, 4);
-    const key = toIsoDate(weekStart);
-    const entry = byWeek.get(key) || { friday, points: [] };
-    entry.points.push({
-      date: day,
-      valueEur: point.valueEur,
-      cumulativeReturnPct: point.cumulativeReturnPct
-    });
-    byWeek.set(key, entry);
-  }
-
-  return Array.from(byWeek.values())
-    .map((entry) => {
-      const sorted = entry.points.sort((a, b) => a.date.getTime() - b.date.getTime());
-      const onOrBeforeFriday = sorted.filter((point) => point.date.getTime() <= entry.friday.getTime());
-      const selected = onOrBeforeFriday.length
-        ? onOrBeforeFriday[onOrBeforeFriday.length - 1]
-        : sorted[0];
-      return {
-        date: entry.friday,
-        valueEur: selected.valueEur,
-        cumulativeReturnPct: selected.cumulativeReturnPct
-      };
-    })
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-}
 
 export default async function PerformancePage() {
   const session = await getServerSession(authOptions);
@@ -80,27 +52,47 @@ export default async function PerformancePage() {
 
   if (!transactions.length) {
     return (
-      <div className="card auth-card">
-        <BrandMotif />
-        <div className="section-title">Monthly Briefing</div>
-        <h1>Performance</h1>
-        <p>No transactions yet. Import your DeGiro CSV to get started.</p>
-      </div>
+      <PageContainer>
+        <Section>
+          <div className="card auth-card">
+            <BrandMotif />
+            <div className="section-title">Monthly Briefing</div>
+            <h1>Performance</h1>
+            <p>No transactions yet. Import your DeGiro CSV to get started.</p>
+          </div>
+        </Section>
+      </PageContainer>
     );
   }
 
-  const dailyValues = await prisma.dailyPortfolioValue.findMany({
+  let dailyValues = await prisma.dailyPortfolioValue.findMany({
     where: { userId: user.id },
     orderBy: { date: "asc" }
   });
 
+  const firstMissingCumulativeReturnDate =
+    dailyValues.find((row) => row.cumulativeReturnAmountEur === null)?.date ?? null;
+  if (firstMissingCumulativeReturnDate) {
+    await getOrCreateDailyPortfolioSeries(user.id, {
+      fromDate: startOfDay(firstMissingCumulativeReturnDate),
+      endDate: new Date()
+    });
+
+    dailyValues = await prisma.dailyPortfolioValue.findMany({
+      where: { userId: user.id },
+      orderBy: { date: "asc" }
+    });
+  }
+
   const dailySeriesForChart: DailyValuePoint[] = dailyValues.map((row) => ({
     date: row.date,
     valueEur: toNumber(row.valueEur),
-    cumulativeReturnPct: row.cumulativeReturnPct === null ? null : Number(row.cumulativeReturnPct)
+    cumulativeReturnAmountEur:
+      row.cumulativeReturnAmountEur === null ? null : Number(row.cumulativeReturnAmountEur),
+    returnIndex: row.returnIndex === null ? null : Number(row.returnIndex),
+    periodReturnPct: row.periodReturnPct === null ? null : Number(row.periodReturnPct)
   }));
 
-  const weeklyFridaySeries = deriveWeeklyFridaySeries(dailySeriesForChart);
   const cashFlows = transactions.map((tx) => {
     const raw = tx.valueEur ?? tx.totalEur;
     const absValue = Math.abs(toNumber(raw));
@@ -111,36 +103,18 @@ export default async function PerformancePage() {
     return { date: startOfDay(tx.tradeAt), flow: 0 };
   });
 
-  let flowIndex = 0;
-  let investedTotal = 0;
-  const chartData: PortfolioChartPoint[] = weeklyFridaySeries.map((row) => {
-    const weekDate = startOfDay(row.date);
-    while (flowIndex < cashFlows.length && cashFlows[flowIndex].date.getTime() <= weekDate.getTime()) {
-      investedTotal += cashFlows[flowIndex].flow;
-      flowIndex += 1;
-    }
-    return {
-      date: format(weekDate, "yyyy-MM-dd"),
-      EUR: Number(toNumber(row.valueEur).toFixed(2)),
-      Invested: Number(investedTotal.toFixed(2))
-    };
-  });
-  const weeklyReturnData: PortfolioChartPoint[] = weeklyFridaySeries
-    .filter((row) => row.cumulativeReturnPct !== null)
-    .map((row) => ({
-      date: format(startOfDay(row.date), "yyyy-MM-dd"),
-      Return: Number((toNumber(row.cumulativeReturnPct ?? 0) * 100).toFixed(2))
-    }));
+  const ranges: PerformanceRangeOption[] = ["max", "ytd", "1y", "1m"];
+  const moversByRangeEntries = await Promise.all(
+    ranges.map(async (range) => [range, await getTopMoversByRange(user.id, range)] as const)
+  );
+  const moversByRange = Object.fromEntries(moversByRangeEntries) as Record<
+    PerformanceRangeOption,
+    Awaited<ReturnType<typeof getTopMoversByRange>>
+  >;
 
-  const recentPerformance = await getRecentPerformance(user.id, 4);
-  const dailySeries = await getOrCreateDailyPortfolioSeries(user.id, {
-    endDate: new Date(),
-    days: 28
-  });
-  const dailyPoints = dailySeriesForChart;
   let dailyFlowIndex = 0;
   let dailyInvestedTotal = 0;
-  const dailyChartData: PortfolioChartPoint[] = dailyPoints.map((point) => {
+  const dailyChartData: PortfolioChartPoint[] = dailySeriesForChart.map((point) => {
     const day = startOfDay(point.date);
     while (dailyFlowIndex < cashFlows.length && cashFlows[dailyFlowIndex].date.getTime() <= day.getTime()) {
       dailyInvestedTotal += cashFlows[dailyFlowIndex].flow;
@@ -149,26 +123,37 @@ export default async function PerformancePage() {
     return {
       date: format(day, "yyyy-MM-dd"),
       EUR: Number(point.valueEur.toFixed(2)),
-      Invested: Number(dailyInvestedTotal.toFixed(2))
+      Invested: Number(dailyInvestedTotal.toFixed(2)),
+      ReturnEur:
+        point.cumulativeReturnAmountEur === null
+          ? null
+          : Number(point.cumulativeReturnAmountEur.toFixed(8)),
+      Index: point.returnIndex === null ? null : Number(point.returnIndex.toFixed(10)),
+      PeriodReturnPct:
+        point.periodReturnPct === null ? null : Number((point.periodReturnPct * 100).toFixed(8))
     };
   });
-  const dailyReturnData: PortfolioChartPoint[] = dailyPoints
-    .filter((point) => point.cumulativeReturnPct !== null)
-    .map((point) => ({
-      date: format(startOfDay(point.date), "yyyy-MM-dd"),
-      Return: Number((toNumber(point.cumulativeReturnPct ?? 0) * 100).toFixed(2))
-    }));
 
   return (
-    <div className="stack-lg">
-      <PortfolioAiSummaryCardClient />
-      <PortfolioValueCard
-        weeklyValueData={chartData}
-        dailyValueData={dailyChartData}
-        weeklyReturnData={weeklyReturnData}
-        dailyReturnData={dailyReturnData}
-      />
-      <RecentPerformanceCard data={recentPerformance} dailySeries={dailySeries} />
-    </div>
+    <PageContainer>
+      <div className="page-stack">
+        <Section>
+          <PortfolioValueCard
+            dailyValueData={dailyChartData}
+          />
+        </Section>
+        <Section>
+          <div className="performance-insights-grid">
+            <RecentPerformanceCard moversByRange={moversByRange} />
+            <PortfolioAiSummaryCardClient />
+          </div>
+        </Section>
+        {process.env.NODE_ENV !== "production" ? (
+          <Section>
+            <ResponsiveShowcase />
+          </Section>
+        ) : null}
+      </div>
+    </PageContainer>
   );
 }

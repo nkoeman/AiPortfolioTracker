@@ -59,16 +59,19 @@ describe("getOrCreateDailyPortfolioSeries", () => {
       {
         date: new Date("2026-02-01T00:00:00.000Z"),
         valueEur: 10,
+        cumulativeReturnAmountEur: 0,
         computedAt: new Date("2026-02-03T01:00:00.000Z")
       },
       {
         date: new Date("2026-02-02T00:00:00.000Z"),
         valueEur: 11,
+        cumulativeReturnAmountEur: 1,
         computedAt: new Date("2026-02-03T02:00:00.000Z")
       },
       {
         date: new Date("2026-02-03T00:00:00.000Z"),
         valueEur: 12,
+        cumulativeReturnAmountEur: 2,
         computedAt: new Date("2026-02-03T03:00:00.000Z")
       }
     ]);
@@ -125,7 +128,7 @@ describe("getOrCreateDailyPortfolioSeries", () => {
     });
 
     expect(series.points.map((point) => point.valueEur)).toEqual([20, 20, 24]);
-    expect(series.points[0].returnIndex).toBe(100);
+    expect(series.points[0].returnIndex).toBeNull();
     expect(series.points[1].returnIndex).toBeCloseTo(100, 8);
     expect(series.points[2].returnIndex).toBeGreaterThan(100);
     expect(series.points.map((point) => point.date.toISOString().slice(0, 10))).toEqual([
@@ -185,6 +188,50 @@ describe("getOrCreateDailyPortfolioSeries", () => {
     expect(series.points[1].cumulativeReturnPct).toBeCloseTo(0, 8);
   });
 
+  it("seeds first-period index using first-day external funding", async () => {
+    mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
+    mocks.externalFlowSeries.mockResolvedValue([
+      { date: new Date("2026-02-01T00:00:00.000Z"), amountEur: -859.38 }
+    ]);
+    mocks.transactionFindMany.mockResolvedValue([
+      {
+        instrumentId: "inst_1",
+        listingId: "lst_1",
+        tradeAt: new Date("2026-02-01T00:00:00.000Z"),
+        quantity: 1,
+        instrument: {
+          listings: [{ id: "lst_1" }]
+        }
+      }
+    ]);
+
+    mocks.listingFindMany.mockResolvedValue([
+      { id: "lst_1", isin: "IE0000000001", currency: "EUR" }
+    ]);
+
+    mocks.dailyListingPriceFindMany.mockResolvedValue([
+      {
+        listingId: "lst_1",
+        date: new Date("2026-02-01T00:00:00.000Z"),
+        adjustedClose: 899.72982709,
+        close: 899.72982709,
+        currency: "EUR"
+      }
+    ]);
+
+    const series = await getOrCreateDailyPortfolioSeries("user_1", {
+      endDate: new Date("2026-02-01T00:00:00.000Z"),
+      days: 1,
+      forceRecompute: true
+    });
+
+    const expectedReturn = 899.72982709 / 859.38 - 1;
+    expect(series.points).toHaveLength(1);
+    expect(series.points[0].periodReturnPct).toBeCloseTo(expectedReturn, 10);
+    expect(series.points[0].returnIndex).toBeCloseTo((899.72982709 / 859.38) * 100, 6);
+    expect(series.points[0].cumulativeReturnPct).toBeCloseTo(expectedReturn, 10);
+  });
+
   it("continues return index from prior stored record", async () => {
     mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
     mocks.dailyPortfolioValueFindFirst.mockResolvedValue({
@@ -226,6 +273,53 @@ describe("getOrCreateDailyPortfolioSeries", () => {
     });
 
     expect(series.points[0].returnIndex).toBeCloseTo(120, 8);
+  });
+
+  it("chains from prior valuation for rolling windows instead of reseeding", async () => {
+    mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
+    mocks.dailyPortfolioValueFindFirst.mockResolvedValue({
+      date: new Date("2026-01-31T00:00:00.000Z"),
+      valueEur: 100,
+      returnIndex: 130
+    });
+    mocks.externalFlowSeries.mockResolvedValue([
+      { date: new Date("2026-02-01T00:00:00.000Z"), amountEur: -50 }
+    ]);
+    mocks.transactionFindMany.mockResolvedValue([
+      {
+        instrumentId: "inst_1",
+        listingId: "lst_1",
+        tradeAt: new Date("2026-01-31T00:00:00.000Z"),
+        quantity: 10,
+        instrument: {
+          listings: [{ id: "lst_1" }]
+        }
+      }
+    ]);
+
+    mocks.listingFindMany.mockResolvedValue([
+      { id: "lst_1", isin: "IE0000000001", currency: "EUR" }
+    ]);
+
+    mocks.dailyListingPriceFindMany.mockResolvedValue([
+      {
+        listingId: "lst_1",
+        date: new Date("2026-02-01T00:00:00.000Z"),
+        adjustedClose: 16,
+        close: 16,
+        currency: "EUR"
+      }
+    ]);
+
+    const series = await getOrCreateDailyPortfolioSeries("user_1", {
+      endDate: new Date("2026-02-01T00:00:00.000Z"),
+      days: 1,
+      forceRecompute: true
+    });
+
+    expect(series.points).toHaveLength(1);
+    expect(series.points[0].periodReturnPct).toBeCloseTo(0.1, 8);
+    expect(series.points[0].returnIndex).toBeCloseTo(143, 8);
   });
 
   it("chains return index across days without external flows", async () => {
@@ -281,7 +375,7 @@ describe("getOrCreateDailyPortfolioSeries", () => {
     expect(series.points[2].cumulativeReturnPct).toBeCloseTo(0.21, 8);
   });
 
-  it("marks partial valuation when prices are missing", async () => {
+  it("returns empty series when no prices exist in range", async () => {
     mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
     mocks.externalFlowSeries.mockResolvedValue([]);
     mocks.transactionFindMany.mockResolvedValue([
@@ -308,7 +402,6 @@ describe("getOrCreateDailyPortfolioSeries", () => {
       forceRecompute: true
     });
 
-    expect(series.points).toHaveLength(1);
-    expect(series.points[0].partialValuation).toBe(true);
+    expect(series.points).toHaveLength(0);
   });
 });
