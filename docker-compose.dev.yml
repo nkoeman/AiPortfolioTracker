@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: portfolio
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  web:
+    depends_on:
+      - db
+    environment:
+      # Dev-only override: force app to local postgres, never managed prod DB.
+      DATABASE_URL: postgresql://postgres:password@db:5432/portfolio
+
+volumes:
+  postgres_data:

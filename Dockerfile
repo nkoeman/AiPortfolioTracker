@@ -6,15 +6,14 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 # Use npm install when no lockfile is present
-RUN --mount=type=cache,target=/root/.npm \
-  if [ -f package-lock.json ]; then npm ci --prefer-offline; else npm install --prefer-offline; fi
+RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; else npm install --prefer-offline; fi
 
 FROM base AS test
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public
-RUN --mount=type=cache,target=/root/.cache/prisma npx prisma generate
+RUN npx prisma generate
 CMD ["npm", "test"]
 
 FROM base AS builder
@@ -22,7 +21,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public
-RUN --mount=type=cache,target=/root/.cache/prisma npx prisma generate
+RUN npx prisma generate
 RUN npm run build
 
 FROM base AS runner
