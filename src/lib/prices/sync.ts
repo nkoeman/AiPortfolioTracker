@@ -111,12 +111,19 @@ async function runSyncPipeline(userId: string, options: SyncOptions): Promise<Sy
   const toDate = startOfDay(options.toDate);
   const startMs = Date.now();
 
+  // Exchange directory must be loaded before linking transactions.
   await ensureEodhdExchangeDirectoryLoaded();
-  await linkUnmappedTransactionsForUser(userId);
 
+  // FX rate sync only needs the date range — it is independent of listing mapping.
+  // Run it in parallel with linking to remove its duration from the critical path.
+  await Promise.all([
+    linkUnmappedTransactionsForUser(userId),
+    ensureWeeklyFxRates({ userId, fromDate, toDate })
+  ]);
+
+  // Price sync requires listings to be linked (above), and portfolio valuation
+  // requires both prices and FX rates — both are complete before this point.
   const prices = await syncDailyPricesForUser(userId, fromDate, toDate);
-  await ensureWeeklyFxRates({ userId, fromDate, toDate });
-
   const dailySeries = await refreshDailyPortfolioValuesForUser(userId, { fromDate, toDate });
   const daily = {
     days: dailySeries.points.length,

@@ -32,6 +32,33 @@ type DailyValuePoint = {
   periodReturnPct: number | null;
 };
 
+const DEFAULT_TOP_MOVERS_RANGE: PerformanceRangeOption = "max";
+const dailySeriesRefreshQueue = new Map<string, Promise<void>>();
+
+function queueDailySeriesRefresh(userId: string, fromDate: Date) {
+  const dateKey = fromDate.toISOString().slice(0, 10);
+  const key = `${userId}:${dateKey}`;
+  if (dailySeriesRefreshQueue.has(key)) return;
+
+  const refreshTask = getOrCreateDailyPortfolioSeries(userId, {
+    fromDate: startOfDay(fromDate),
+    endDate: new Date()
+  })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[DASH][PERF] background daily series refresh failed", {
+        userId,
+        fromDate: dateKey,
+        error: message
+      });
+    })
+    .then(() => {
+      dailySeriesRefreshQueue.delete(key);
+    });
+
+  dailySeriesRefreshQueue.set(key, refreshTask);
+}
+
 export default async function PerformancePage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) redirect("/login");
@@ -39,16 +66,23 @@ export default async function PerformancePage() {
   const user = await prisma.user.findUnique({ where: { email: session.user.email } });
   if (!user) redirect("/login");
 
-  const transactions = await prisma.transaction.findMany({
-    where: { userId: user.id },
-    select: {
-      tradeAt: true,
-      quantity: true,
-      valueEur: true,
-      totalEur: true
-    },
-    orderBy: { tradeAt: "asc" }
-  });
+  // Fetch transactions and daily portfolio values in parallel — neither depends on the other.
+  const [transactions, initialDailyValues] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { userId: user.id },
+      select: {
+        tradeAt: true,
+        quantity: true,
+        valueEur: true,
+        totalEur: true
+      },
+      orderBy: { tradeAt: "asc" }
+    }),
+    prisma.dailyPortfolioValue.findMany({
+      where: { userId: user.id },
+      orderBy: { date: "asc" }
+    })
+  ]);
 
   if (!transactions.length) {
     return (
@@ -65,23 +99,12 @@ export default async function PerformancePage() {
     );
   }
 
-  let dailyValues = await prisma.dailyPortfolioValue.findMany({
-    where: { userId: user.id },
-    orderBy: { date: "asc" }
-  });
+  let dailyValues = initialDailyValues;
 
   const firstMissingCumulativeReturnDate =
     dailyValues.find((row) => row.cumulativeReturnAmountEur === null)?.date ?? null;
   if (firstMissingCumulativeReturnDate) {
-    await getOrCreateDailyPortfolioSeries(user.id, {
-      fromDate: startOfDay(firstMissingCumulativeReturnDate),
-      endDate: new Date()
-    });
-
-    dailyValues = await prisma.dailyPortfolioValue.findMany({
-      where: { userId: user.id },
-      orderBy: { date: "asc" }
-    });
+    queueDailySeriesRefresh(user.id, firstMissingCumulativeReturnDate);
   }
 
   const dailySeriesForChart: DailyValuePoint[] = dailyValues.map((row) => ({
@@ -103,14 +126,7 @@ export default async function PerformancePage() {
     return { date: startOfDay(tx.tradeAt), flow: 0 };
   });
 
-  const ranges: PerformanceRangeOption[] = ["max", "ytd", "1y", "1m"];
-  const moversByRangeEntries = await Promise.all(
-    ranges.map(async (range) => [range, await getTopMoversByRange(user.id, range)] as const)
-  );
-  const moversByRange = Object.fromEntries(moversByRangeEntries) as Record<
-    PerformanceRangeOption,
-    Awaited<ReturnType<typeof getTopMoversByRange>>
-  >;
+  const initialTopMovers = await getTopMoversByRange(user.id, DEFAULT_TOP_MOVERS_RANGE);
 
   let dailyFlowIndex = 0;
   let dailyInvestedTotal = 0;
@@ -144,7 +160,10 @@ export default async function PerformancePage() {
         </Section>
         <Section>
           <div className="performance-insights-grid">
-            <RecentPerformanceCard moversByRange={moversByRange} />
+            <RecentPerformanceCard
+              initialRange={DEFAULT_TOP_MOVERS_RANGE}
+              initialData={initialTopMovers}
+            />
             <PortfolioAiSummaryCardClient />
           </div>
         </Section>

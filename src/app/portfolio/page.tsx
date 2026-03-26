@@ -296,6 +296,39 @@ export default async function PortfolioPage({
     costBasisEurByInstrument.set(tx.instrumentId, basis);
   }
 
+  // Collect all unique FX lookups needed across all positions, then fetch in parallel.
+  type FxCacheKey = string; // "yyyy-MM-dd:CURRENCY"
+  const fxLookups = new Map<FxCacheKey, { date: Date; currency: string }>();
+
+  for (const entry of byInstrument.values()) {
+    const listingId = chosenListingByInstrument.get(entry.instrumentId);
+    if (!listingId || entry.qty === 0) continue;
+
+    const series = pricesByListing.get(listingId) ?? [];
+    const latest = series[series.length - 1] ?? null;
+    const ytdStartPrice = series.find((point) => point.date.getTime() >= ytdStart.getTime()) ?? null;
+
+    if (latest) {
+      const key: FxCacheKey = `${format(latest.date, "yyyy-MM-dd")}:${latest.currency}`;
+      if (!fxLookups.has(key)) fxLookups.set(key, { date: latest.date, currency: latest.currency });
+    }
+    if (ytdStartPrice) {
+      const key: FxCacheKey = `${format(ytdStartPrice.date, "yyyy-MM-dd")}:${ytdStartPrice.currency}`;
+      if (!fxLookups.has(key)) fxLookups.set(key, { date: ytdStartPrice.date, currency: ytdStartPrice.currency });
+    }
+  }
+
+  const fxCache = new Map<FxCacheKey, number | null>();
+  await Promise.all(
+    Array.from(fxLookups.entries()).map(async ([key, { date, currency }]) => {
+      try {
+        fxCache.set(key, await getFxRateForWeek(date, currency));
+      } catch {
+        fxCache.set(key, null);
+      }
+    })
+  );
+
   const rows = [] as OpenPositionRow[];
 
   for (const entry of byInstrument.values()) {
@@ -310,18 +343,16 @@ export default async function PortfolioPage({
 
     let latestFx: number | null = null;
     if (latest && latestAdjClose !== null) {
-      try {
-        latestFx = await getFxRateForWeek(latest.date, latest.currency);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+      const key: FxCacheKey = `${format(latest.date, "yyyy-MM-dd")}:${latest.currency}`;
+      latestFx = fxCache.get(key) ?? null;
+      if (latestFx === null) {
         console.warn("[VAL][EUR] missing latest FX conversion for position", {
           userId: user.id,
           instrumentId: entry.instrumentId,
           isin: entry.isin,
           listingId,
           currency: latest.currency,
-          weekEndDate: format(latest.date, "yyyy-MM-dd"),
-          message
+          weekEndDate: format(latest.date, "yyyy-MM-dd")
         });
       }
     }
@@ -340,24 +371,23 @@ export default async function PortfolioPage({
     let ytdPct: number | null = null;
 
     if (latestAdjClose !== null && ytdStartPrice && ytdStartPrice.adjClose !== 0 && latestFx !== null) {
-      try {
-        const ytdFx = await getFxRateForWeek(ytdStartPrice.date, ytdStartPrice.currency);
+      const ytdKey: FxCacheKey = `${format(ytdStartPrice.date, "yyyy-MM-dd")}:${ytdStartPrice.currency}`;
+      const ytdFx = fxCache.get(ytdKey) ?? null;
+      if (ytdFx !== null) {
         const latestUnitEur = latestAdjClose * latestFx;
         const ytdUnitEur = ytdStartPrice.adjClose * ytdFx;
         ytdPnlEur = entry.qty * (latestUnitEur - ytdUnitEur);
         ytdPct = ytdUnitEur === 0 ? null : latestUnitEur / ytdUnitEur - 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+      } else {
         console.warn("[VAL][EUR] missing YTD FX conversion for position", {
           userId: user.id,
           instrumentId: entry.instrumentId,
           isin: entry.isin,
           listingId,
-          latestCurrency: latest.currency,
+          latestCurrency: latest?.currency,
           ytdCurrency: ytdStartPrice.currency,
-          latestWeekEndDate: format(latest.date, "yyyy-MM-dd"),
-          ytdWeekEndDate: format(ytdStartPrice.date, "yyyy-MM-dd"),
-          message
+          latestWeekEndDate: latest ? format(latest.date, "yyyy-MM-dd") : null,
+          ytdWeekEndDate: format(ytdStartPrice.date, "yyyy-MM-dd")
         });
       }
     }

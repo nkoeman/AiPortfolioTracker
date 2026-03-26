@@ -24,6 +24,16 @@ type InstrumentLite = {
   listings: ListingLite[];
 };
 
+type TopMoversCacheEntry = {
+  expiresAt: number;
+  value: TopMoversRangeResult;
+};
+
+const TOP_MOVERS_CACHE_TTL_MS = 2 * 60 * 1000;
+const TOP_MOVERS_CACHE_MAX_ENTRIES = 500;
+const topMoversCache = new Map<string, TopMoversCacheEntry>();
+const topMoversInFlight = new Map<string, Promise<TopMoversRangeResult>>();
+
 export type TopMoversRangeContributor = {
   instrumentId: string;
   isin: string;
@@ -83,6 +93,23 @@ function rankRows(rows: TopMoversRangeContributor[]) {
   };
 }
 
+function buildTopMoversCacheKey(userId: string, range: PerformanceRangeOption, latestDateIso: string) {
+  return `${userId}:${range}:${latestDateIso}`;
+}
+
+function pruneTopMoversCache(now: number) {
+  for (const [key, entry] of topMoversCache.entries()) {
+    if (entry.expiresAt <= now) {
+      topMoversCache.delete(key);
+    }
+  }
+  while (topMoversCache.size > TOP_MOVERS_CACHE_MAX_ENTRIES) {
+    const firstKey = topMoversCache.keys().next().value;
+    if (!firstKey) break;
+    topMoversCache.delete(firstKey);
+  }
+}
+
 export async function getTopMoversByRange(
   userId: string,
   range: PerformanceRangeOption
@@ -105,190 +132,222 @@ export async function getTopMoversByRange(
   }
 
   const endDate = startOfDay(latestDaily.date);
-  const startDate = range === "max" ? null : startOfDay(getPerformanceRangeCutoff(endDate, range));
+  const cacheKey = buildTopMoversCacheKey(userId, range, toIsoDate(endDate));
+  const now = Date.now();
+  const cached = topMoversCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+  if (cached && cached.expiresAt <= now) {
+    topMoversCache.delete(cacheKey);
+  }
 
-  const transactions = await prisma.transaction.findMany({
-    where: {
-      userId,
-      type: "TRADE",
-      tradeAt: { lte: endDate }
-    },
-    include: {
-      instrument: {
-        include: {
-          listings: {
-            select: {
-              id: true,
-              isPrimary: true,
-              mappingStatus: true,
-              eodhdCode: true
+  const inFlight = topMoversInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const task = (async () => {
+    const startDate = range === "max" ? null : startOfDay(getPerformanceRangeCutoff(endDate, range));
+    const granularity: TopMoversRangeResult["granularity"] =
+      usesWeeklyGranularity(range) ? "WEEKLY" : "DAILY";
+
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        userId,
+        type: "TRADE",
+        tradeAt: { lte: endDate }
+      },
+      include: {
+        instrument: {
+          include: {
+            listings: {
+              select: {
+                id: true,
+                isPrimary: true,
+                mappingStatus: true,
+                eodhdCode: true
+              }
             }
           }
         }
-      }
-    },
-    orderBy: { tradeAt: "asc" }
-  });
+      },
+      orderBy: { tradeAt: "asc" }
+    });
 
-  const byInstrument = new Map<
-    string,
-    { instrument: InstrumentLite; qty: number; fallbackListingId: string | null }
-  >();
+    const byInstrument = new Map<
+      string,
+      { instrument: InstrumentLite; qty: number; fallbackListingId: string | null }
+    >();
 
-  for (const tx of transactions) {
-    const entry = byInstrument.get(tx.instrumentId) || {
-      instrument: tx.instrument,
-      qty: 0,
-      fallbackListingId: tx.listingId
-    };
-    entry.qty += toNumber(tx.quantity);
-    if (!entry.fallbackListingId && tx.listingId) entry.fallbackListingId = tx.listingId;
-    byInstrument.set(tx.instrumentId, entry);
-  }
+    for (const tx of transactions) {
+      const entry = byInstrument.get(tx.instrumentId) || {
+        instrument: tx.instrument,
+        qty: 0,
+        fallbackListingId: tx.listingId
+      };
+      entry.qty += toNumber(tx.quantity);
+      if (!entry.fallbackListingId && tx.listingId) entry.fallbackListingId = tx.listingId;
+      byInstrument.set(tx.instrumentId, entry);
+    }
 
-  const chosenListingByInstrument = new Map<string, ListingLite>();
-  const listingIds = new Set<string>();
-  for (const [instrumentId, entry] of byInstrument.entries()) {
-    if (entry.qty <= 0) continue;
-    const listing = pickListing(entry.instrument.listings, entry.fallbackListingId);
-    if (!listing) continue;
-    chosenListingByInstrument.set(instrumentId, listing);
-    listingIds.add(listing.id);
-  }
+    const chosenListingByInstrument = new Map<string, ListingLite>();
+    const listingIds = new Set<string>();
+    for (const [instrumentId, entry] of byInstrument.entries()) {
+      if (entry.qty <= 0) continue;
+      const listing = pickListing(entry.instrument.listings, entry.fallbackListingId);
+      if (!listing) continue;
+      chosenListingByInstrument.set(instrumentId, listing);
+      listingIds.add(listing.id);
+    }
 
-  const prices = listingIds.size
-    ? await prisma.dailyListingPrice.findMany({
-        where: {
-          listingId: { in: Array.from(listingIds) },
-          date: {
-            ...(startDate ? { gte: startDate } : {}),
-            lte: endDate
+    const prices = listingIds.size
+      ? await prisma.dailyListingPrice.findMany({
+          where: {
+            listingId: { in: Array.from(listingIds) },
+            date: {
+              ...(startDate ? { gte: startDate } : {}),
+              lte: endDate
+            }
+          },
+          orderBy: [{ listingId: "asc" }, { date: "asc" }],
+          select: {
+            listingId: true,
+            date: true,
+            adjustedClose: true,
+            currency: true
           }
-        },
-        orderBy: [{ listingId: "asc" }, { date: "asc" }],
-        select: {
-          listingId: true,
-          date: true,
-          adjustedClose: true,
-          currency: true
-        }
-      })
-    : [];
-
-  const pricesByListing = new Map<string, Array<{ date: Date; adjClose: number; currency: string }>>();
-  for (const row of prices) {
-    const list = pricesByListing.get(row.listingId) || [];
-    list.push({
-      date: startOfDay(row.date),
-      adjClose: toNumber(row.adjustedClose),
-      currency: String(row.currency || "EUR")
-    });
-    pricesByListing.set(row.listingId, list);
-  }
-
-  const fxCache = new Map<string, number>();
-  const contributors: TopMoversRangeContributor[] = [];
-
-  for (const [instrumentId, entry] of byInstrument.entries()) {
-    if (entry.qty <= 0) continue;
-    const listing = chosenListingByInstrument.get(instrumentId);
-    if (!listing) continue;
-
-    const dailySeries = pricesByListing.get(listing.id) || [];
-    if (dailySeries.length < 2) continue;
-
-    const points = usesWeeklyGranularity(range)
-      ? getWeeklySeriesFromDaily(
-          dailySeries.map((row) => ({
-            date: row.date,
-            valueEur: row.adjClose
-          }))
-        ).map((row) => {
-          const match = dailySeries.find((seriesPoint) => toIsoDate(seriesPoint.date) === toIsoDate(row.weekEndDate));
-          return {
-            date: row.weekEndDate,
-            adjClose: row.valueEur,
-            currency: match?.currency || dailySeries[dailySeries.length - 1].currency
-          };
         })
-      : dailySeries;
+      : [];
 
-    if (points.length < 2) continue;
-
-    const startPoint = points[0];
-    const endPoint = points[points.length - 1];
-    if (!startPoint || !endPoint || startPoint.adjClose <= 0 || endPoint.adjClose <= 0) continue;
-
-    const startFxKey = `${toIsoDate(startPoint.date)}:${startPoint.currency}`;
-    const endFxKey = `${toIsoDate(endPoint.date)}:${endPoint.currency}`;
-
-    let startFx = fxCache.get(startFxKey);
-    if (startFx === undefined) {
-      try {
-        startFx = await getFxRateForWeek(startPoint.date, startPoint.currency);
-        fxCache.set(startFxKey, startFx);
-      } catch {
-        continue;
-      }
+    const pricesByListing = new Map<string, Array<{ date: Date; adjClose: number; currency: string }>>();
+    for (const row of prices) {
+      const list = pricesByListing.get(row.listingId) || [];
+      list.push({
+        date: startOfDay(row.date),
+        adjClose: toNumber(row.adjustedClose),
+        currency: String(row.currency || "EUR")
+      });
+      pricesByListing.set(row.listingId, list);
     }
 
-    let endFx = fxCache.get(endFxKey);
-    if (endFx === undefined) {
-      try {
-        endFx = await getFxRateForWeek(endPoint.date, endPoint.currency);
-        fxCache.set(endFxKey, endFx);
-      } catch {
-        continue;
+    const fxCache = new Map<string, number>();
+    const contributors: TopMoversRangeContributor[] = [];
+
+    for (const [instrumentId, entry] of byInstrument.entries()) {
+      if (entry.qty <= 0) continue;
+      const listing = chosenListingByInstrument.get(instrumentId);
+      if (!listing) continue;
+
+      const dailySeries = pricesByListing.get(listing.id) || [];
+      if (dailySeries.length < 2) continue;
+
+      const points = usesWeeklyGranularity(range)
+        ? (() => {
+            const currencyByDate = new Map(
+              dailySeries.map((row) => [toIsoDate(row.date), row.currency] as const)
+            );
+            const fallbackCurrency = dailySeries[dailySeries.length - 1].currency;
+            return getWeeklySeriesFromDaily(
+              dailySeries.map((row) => ({
+                date: row.date,
+                valueEur: row.adjClose
+              }))
+            ).map((row) => ({
+              date: row.weekEndDate,
+              adjClose: row.valueEur,
+              currency: currencyByDate.get(toIsoDate(row.weekEndDate)) || fallbackCurrency
+            }));
+          })()
+        : dailySeries;
+
+      if (points.length < 2) continue;
+
+      const startPoint = points[0];
+      const endPoint = points[points.length - 1];
+      if (!startPoint || !endPoint || startPoint.adjClose <= 0 || endPoint.adjClose <= 0) continue;
+
+      const startFxKey = `${toIsoDate(startPoint.date)}:${startPoint.currency}`;
+      const endFxKey = `${toIsoDate(endPoint.date)}:${endPoint.currency}`;
+
+      let startFx = fxCache.get(startFxKey);
+      if (startFx === undefined) {
+        try {
+          startFx = await getFxRateForWeek(startPoint.date, startPoint.currency);
+          fxCache.set(startFxKey, startFx);
+        } catch {
+          continue;
+        }
       }
+
+      let endFx = fxCache.get(endFxKey);
+      if (endFx === undefined) {
+        try {
+          endFx = await getFxRateForWeek(endPoint.date, endPoint.currency);
+          fxCache.set(endFxKey, endFx);
+        } catch {
+          continue;
+        }
+      }
+
+      const startUnitEur = startPoint.adjClose * startFx;
+      const endUnitEur = endPoint.adjClose * endFx;
+      if (!Number.isFinite(startUnitEur) || !Number.isFinite(endUnitEur) || startUnitEur <= 0) continue;
+
+      const contributionEur = entry.qty * (endUnitEur - startUnitEur);
+      const localReturnPct = endUnitEur / startUnitEur - 1;
+
+      contributors.push({
+        instrumentId,
+        isin: entry.instrument.isin,
+        instrumentName: entry.instrument.displayName || entry.instrument.name,
+        contributionEur,
+        contributionPctOfMove: null,
+        localReturnPct
+      });
     }
 
-    const startUnitEur = startPoint.adjClose * startFx;
-    const endUnitEur = endPoint.adjClose * endFx;
-    if (!Number.isFinite(startUnitEur) || !Number.isFinite(endUnitEur) || startUnitEur <= 0) continue;
+    const ranked = rankRows(contributors);
+    const actualStartDate = prices.length ? prices[0].date : startDate;
+    const actualEndDate = prices.length ? prices[prices.length - 1].date : endDate;
 
-    const contributionEur = entry.qty * (endUnitEur - startUnitEur);
-    const localReturnPct = endUnitEur / startUnitEur - 1;
-
-    contributors.push({
-      instrumentId,
-      isin: entry.instrument.isin,
-      instrumentName: entry.instrument.displayName || entry.instrument.name,
-      contributionEur,
-      contributionPctOfMove: null,
-      localReturnPct
+    console.info("[DASH][TOP_MOVERS]", {
+      userId,
+      range,
+      granularity,
+      startDate: actualStartDate ? toIsoDate(actualStartDate) : null,
+      endDate: actualEndDate ? toIsoDate(actualEndDate) : null,
+      topGainers: ranked.topGainers.map((row) => ({
+        instrumentId: row.instrumentId,
+        returnPct: row.localReturnPct
+      })),
+      topLosers: ranked.topLosers.map((row) => ({
+        instrumentId: row.instrumentId,
+        returnPct: row.localReturnPct
+      }))
     });
+
+    return {
+      range,
+      label: PERFORMANCE_RANGE_LABELS[range],
+      granularity,
+      window: {
+        startDate: actualStartDate ?? null,
+        endDate: actualEndDate ?? null
+      },
+      contributors: ranked,
+      lastUpdatedAt: latestDaily.date
+    };
+  })();
+
+  topMoversInFlight.set(cacheKey, task);
+  try {
+    const result = await task;
+    const expiresAt = Date.now() + TOP_MOVERS_CACHE_TTL_MS;
+    topMoversCache.set(cacheKey, { expiresAt, value: result });
+    pruneTopMoversCache(Date.now());
+    return result;
+  } finally {
+    topMoversInFlight.delete(cacheKey);
   }
-
-  const ranked = rankRows(contributors);
-  const actualStartDate = prices.length ? prices[0].date : startDate;
-  const actualEndDate = prices.length ? prices[prices.length - 1].date : endDate;
-
-  console.info("[DASH][TOP_MOVERS]", {
-    userId,
-    range,
-    granularity: usesWeeklyGranularity(range) ? "WEEKLY" : "DAILY",
-    startDate: actualStartDate ? toIsoDate(actualStartDate) : null,
-    endDate: actualEndDate ? toIsoDate(actualEndDate) : null,
-    topGainers: ranked.topGainers.map((row) => ({
-      instrumentId: row.instrumentId,
-      returnPct: row.localReturnPct
-    })),
-    topLosers: ranked.topLosers.map((row) => ({
-      instrumentId: row.instrumentId,
-      returnPct: row.localReturnPct
-    }))
-  });
-
-  return {
-    range,
-    label: PERFORMANCE_RANGE_LABELS[range],
-    granularity: usesWeeklyGranularity(range) ? "WEEKLY" : "DAILY",
-    window: {
-      startDate: actualStartDate ?? null,
-      endDate: actualEndDate ?? null
-    },
-    contributors: ranked,
-    lastUpdatedAt: latestDaily.date
-  };
 }
-

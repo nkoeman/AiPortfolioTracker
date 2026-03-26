@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { SelectMenu } from "@/components/SelectMenu";
 import { TopMoversBarChart } from "@/components/TopMoversBarChart";
 import {
@@ -17,12 +17,60 @@ function formatDate(value: Date | null | undefined) {
 }
 
 type RecentPerformanceCardProps = {
-  moversByRange: Record<PerformanceRangeOption, TopMoversRangeResult>;
+  initialRange: PerformanceRangeOption;
+  initialData: TopMoversRangeResult;
 };
 
-export function RecentPerformanceCard({ moversByRange }: RecentPerformanceCardProps) {
-  const [range, setRange] = useState<PerformanceRangeOption>("max");
-  const data = moversByRange[range];
+type TopMoversRangeApiResult = Omit<TopMoversRangeResult, "window" | "lastUpdatedAt"> & {
+  window: {
+    startDate: Date | string | null;
+    endDate: Date | string | null;
+  };
+  lastUpdatedAt: Date | string | null;
+};
+
+function toDateOrNull(value: Date | string | null | undefined) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function normalizeTopMoversResult(raw: TopMoversRangeApiResult): TopMoversRangeResult {
+  return {
+    ...raw,
+    window: {
+      startDate: toDateOrNull(raw.window.startDate),
+      endDate: toDateOrNull(raw.window.endDate)
+    },
+    lastUpdatedAt: toDateOrNull(raw.lastUpdatedAt)
+  };
+}
+
+function createInitialCache(
+  initialRange: PerformanceRangeOption,
+  initialData: TopMoversRangeResult
+): Record<PerformanceRangeOption, TopMoversRangeResult | null> {
+  return {
+    max: initialRange === "max" ? initialData : null,
+    ytd: initialRange === "ytd" ? initialData : null,
+    "1y": initialRange === "1y" ? initialData : null,
+    "1m": initialRange === "1m" ? initialData : null
+  };
+}
+
+export function RecentPerformanceCard({ initialRange, initialData }: RecentPerformanceCardProps) {
+  const normalizedInitialData = useMemo(
+    () => normalizeTopMoversResult(initialData as TopMoversRangeApiResult),
+    [initialData]
+  );
+  const [range, setRange] = useState<PerformanceRangeOption>(initialRange);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cacheByRange, setCacheByRange] = useState<Record<PerformanceRangeOption, TopMoversRangeResult | null>>(
+    () => createInitialCache(initialRange, normalizedInitialData)
+  );
+  const data = cacheByRange[range];
+  const hasLoadedData = Boolean(data);
   const hasHistory = Boolean(data?.window.startDate && data?.window.endDate);
   const options = useMemo(
     () =>
@@ -32,6 +80,45 @@ export function RecentPerformanceCard({ moversByRange }: RecentPerformanceCardPr
       })),
     []
   );
+
+  useEffect(() => {
+    setRange(initialRange);
+    setCacheByRange(createInitialCache(initialRange, normalizedInitialData));
+  }, [initialRange, normalizedInitialData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (cacheByRange[range]) return;
+
+    const loadRange = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`/api/dashboard/top-movers?range=${encodeURIComponent(range)}`);
+        const body = (await response.json()) as TopMoversRangeApiResult | { error?: string };
+        if (!response.ok) {
+          throw new Error(
+            typeof body === "object" && body && "error" in body
+              ? body.error || "Unable to load gainers and losers."
+              : "Unable to load gainers and losers."
+          );
+        }
+        if (cancelled) return;
+        const normalized = normalizeTopMoversResult(body as TopMoversRangeApiResult);
+        setCacheByRange((current) => ({ ...current, [range]: normalized }));
+      } catch (loadError) {
+        if (cancelled) return;
+        setError(loadError instanceof Error ? loadError.message : "Unable to load gainers and losers.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadRange();
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheByRange, range]);
 
   return (
     <div className="card stack recent-performance-card">
@@ -50,26 +137,39 @@ export function RecentPerformanceCard({ moversByRange }: RecentPerformanceCardPr
         </div>
       </div>
 
-      {!hasHistory ? (
+      {loading && !data ? (
+        <div>
+          <p>Loading gainers and losers...</p>
+        </div>
+      ) : null}
+      {error ? (
+        <div>
+          <small className="warning-text">{error}</small>
+        </div>
+      ) : null}
+
+      {hasLoadedData && !hasHistory ? (
         <div>
           <p>Not enough history yet. Import transactions and sync prices to build history.</p>
         </div>
       ) : null}
 
-      <div className="stack">
-        <TopMoversBarChart
-          topGainers={data.contributors.topGainers}
-          topLosers={data.contributors.topLosers}
-        />
-        <div className="top-movers-meta">
-          <small>
-            Window: {formatDate(data.window.startDate)} to {formatDate(data.window.endDate)} ({data.granularity})
-          </small>
-          {data.lastUpdatedAt ? (
-            <small className="tone-muted">Last updated: {formatDate(data.lastUpdatedAt)}</small>
-          ) : null}
+      {data ? (
+        <div className="stack">
+          <TopMoversBarChart
+            topGainers={data.contributors.topGainers}
+            topLosers={data.contributors.topLosers}
+          />
+          <div className="top-movers-meta">
+            <small>
+              Window: {formatDate(data.window.startDate)} to {formatDate(data.window.endDate)} ({data.granularity})
+            </small>
+            {data.lastUpdatedAt ? (
+              <small className="tone-muted">Last updated: {formatDate(data.lastUpdatedAt)}</small>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
