@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
-import { prisma } from "@/lib/prisma";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { getTopMoversByRange } from "@/lib/dashboard/topMoversByRange";
 import type { PerformanceRangeOption } from "@/lib/charts/performanceRange";
 
@@ -13,17 +11,9 @@ function isPerformanceRange(value: string): value is PerformanceRangeOption {
 
 export async function GET(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      select: { id: true }
-    });
+    const user = await getCurrentAppUser();
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const url = new URL(request.url);

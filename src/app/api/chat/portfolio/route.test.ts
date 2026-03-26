@@ -1,25 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-  userFindUnique: vi.fn(),
+  getCurrentAppUser: vi.fn(),
   runPortfolioChat: vi.fn()
 }));
 
-vi.mock("next-auth", () => ({
-  getServerSession: mocks.getServerSession
-}));
-
-vi.mock("@/lib/auth/options", () => ({
-  authOptions: {}
-}));
-
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: mocks.userFindUnique
-    }
-  }
+vi.mock("@/lib/auth/appUser", () => ({
+  getCurrentAppUser: mocks.getCurrentAppUser
 }));
 
 vi.mock("@/lib/chat/portfolioChat", () => ({
@@ -30,13 +17,12 @@ import { POST } from "@/app/api/chat/portfolio/route";
 
 describe("POST /api/chat/portfolio", () => {
   beforeEach(() => {
-    mocks.getServerSession.mockReset();
-    mocks.userFindUnique.mockReset();
+    mocks.getCurrentAppUser.mockReset();
     mocks.runPortfolioChat.mockReset();
   });
 
   it("returns 401 when unauthenticated", async () => {
-    mocks.getServerSession.mockResolvedValue(null);
+    mocks.getCurrentAppUser.mockResolvedValue(null);
     const response = await POST(
       new Request("http://localhost/api/chat/portfolio", {
         method: "POST",
@@ -48,8 +34,7 @@ describe("POST /api/chat/portfolio", () => {
   });
 
   it("executes chat using authenticated user id only", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
-    mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
+    mocks.getCurrentAppUser.mockResolvedValue({ id: "user_1", email: "user@example.com", name: null, clerkUserId: "clerk_1" });
     mocks.runPortfolioChat.mockResolvedValue({
       message: "Summary",
       metadata: { model: "gpt-4o-mini", toolCalls: [], refusal: false }

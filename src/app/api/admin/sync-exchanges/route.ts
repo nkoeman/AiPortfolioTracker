@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { upsertEodhdExchanges } from "@/lib/eodhd/exchanges";
 
 export const runtime = "nodejs";
 
 // Runs a protected exchange-directory sync so MIC-based listing selection has fresh EODHD metadata.
 export async function POST() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) {
+  const user = await getCurrentAppUser();
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

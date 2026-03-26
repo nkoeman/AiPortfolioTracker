@@ -4,20 +4,23 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { LogoutButton } from "@/components/LogoutButton";
+import { SignOutButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import { SidebarNav } from "@/components/SidebarNav";
 import { PortfolioChatWidget } from "@/components/chat/PortfolioChatWidget";
 
 type AppShellProps = {
   children: React.ReactNode;
-  hasSession: boolean;
 };
 
-// Renders the main app shell, but hides it for auth routes like /login.
-export function AppShell({ children, hasSession }: AppShellProps) {
+// Renders the main app shell, but hides it for auth routes like /sign-in.
+export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const hideShell = pathname === "/login" || pathname === "/register";
+  const hideShell =
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname.startsWith("/sign-in") ||
+    pathname.startsWith("/sign-up");
 
   useEffect(() => {
     setMobileNavOpen(false);
@@ -50,7 +53,17 @@ export function AppShell({ children, hasSession }: AppShellProps) {
         </div>
         <SidebarNav />
         <div className="sidebar-auth">
-          {hasSession ? <LogoutButton /> : <Link href="/login">Login</Link>}
+          <SignedIn>
+            <div className="stack-sm">
+              <UserButton afterSignOutUrl="/sign-in" />
+              <SignOutButton redirectUrl="/sign-in">
+                <button type="button" className="secondary">Sign out</button>
+              </SignOutButton>
+            </div>
+          </SignedIn>
+          <SignedOut>
+            <Link href="/sign-in">Sign in</Link>
+          </SignedOut>
         </div>
       </aside>
 
@@ -76,7 +89,15 @@ export function AppShell({ children, hasSession }: AppShellProps) {
         </div>
         <SidebarNav onNavigate={() => setMobileNavOpen(false)} />
         <div className="drawer-auth stack-sm">
-          {hasSession ? <LogoutButton /> : <Link href="/login">Login</Link>}
+          <SignedIn>
+            <UserButton afterSignOutUrl="/sign-in" />
+            <SignOutButton redirectUrl="/sign-in">
+              <button type="button" className="secondary">Sign out</button>
+            </SignOutButton>
+          </SignedIn>
+          <SignedOut>
+            <Link href="/sign-in">Sign in</Link>
+          </SignedOut>
         </div>
       </aside>
 
@@ -89,7 +110,7 @@ export function AppShell({ children, hasSession }: AppShellProps) {
             aria-label="Open navigation menu"
           >
             <span aria-hidden="true" className="hamburger-icon">
-              ☰
+              &#9776;
             </span>
           </button>
           <Image
@@ -103,7 +124,9 @@ export function AppShell({ children, hasSession }: AppShellProps) {
         </header>
         <main>{children}</main>
       </div>
-      {hasSession ? <PortfolioChatWidget /> : null}
+      <SignedIn>
+        <PortfolioChatWidget />
+      </SignedIn>
     </div>
   );
 }

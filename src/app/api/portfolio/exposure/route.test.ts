@@ -1,25 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-  userFindUnique: vi.fn(),
+  getCurrentAppUser: vi.fn(),
   getPortfolioExposure: vi.fn()
 }));
 
-vi.mock("next-auth", () => ({
-  getServerSession: mocks.getServerSession
-}));
-
-vi.mock("@/lib/auth/options", () => ({
-  authOptions: {}
-}));
-
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: mocks.userFindUnique
-    }
-  }
+vi.mock("@/lib/auth/appUser", () => ({
+  getCurrentAppUser: mocks.getCurrentAppUser
 }));
 
 vi.mock("@/lib/exposure/portfolioExposure", () => ({
@@ -30,13 +17,12 @@ import { GET } from "@/app/api/portfolio/exposure/route";
 
 describe("GET /api/portfolio/exposure", () => {
   beforeEach(() => {
-    mocks.getServerSession.mockReset();
-    mocks.userFindUnique.mockReset();
+    mocks.getCurrentAppUser.mockReset();
     mocks.getPortfolioExposure.mockReset();
   });
 
   it("returns 401 when the request is unauthenticated", async () => {
-    mocks.getServerSession.mockResolvedValue(null);
+    mocks.getCurrentAppUser.mockResolvedValue(null);
 
     const response = await GET(new Request("http://localhost/api/portfolio/exposure"));
     const body = await response.json();
@@ -46,8 +32,7 @@ describe("GET /api/portfolio/exposure", () => {
   });
 
   it("returns the exposure payload and preserves normalized chart sums", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
-    mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
+    mocks.getCurrentAppUser.mockResolvedValue({ id: "user_1", email: "user@example.com", name: null, clerkUserId: "clerk_1" });
     mocks.getPortfolioExposure.mockResolvedValue({
       asOfDate: "2026-02-27",
       coverage: 0.9,

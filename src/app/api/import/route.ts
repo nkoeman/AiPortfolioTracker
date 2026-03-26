@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { resolveOrCreateListingForTransaction } from "@/lib/eodhd/mapping";
 import { parseDegiroCsv } from "@/lib/import/degiroCsv";
 import { ensureInstrumentProfiles } from "@/lib/enrichment";
@@ -15,8 +14,8 @@ export const runtime = "nodejs";
 // Imports a DeGiro CSV, resolves MIC-first listing mapping, and triggers background price sync.
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    const user = await getCurrentAppUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -33,11 +32,6 @@ export async function POST(req: Request) {
 
     if (!rows.length) {
       return NextResponse.json({ error: "No valid rows found in CSV." }, { status: 400 });
-    }
-
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     const importBatch = await prisma.importBatch.create({

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
 import { Prisma } from "@prisma/client";
-import { authOptions } from "@/lib/auth/options";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { resolveOrCreateListingForSelectedExchange } from "@/lib/eodhd/mapping";
 import { getFxRateForWeek } from "@/lib/fx/convert";
 import { syncWeeklyFxRates } from "@/lib/fx/sync";
@@ -88,8 +87,8 @@ function shouldRunFullSync(tradeAt: Date) {
 // Persists a single manual trade while preserving the current signed-quantity model used across valuations.
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.email) {
+    const user = await getCurrentAppUser();
+    if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -118,11 +117,6 @@ export async function POST(req: Request) {
     }
     if (!exchangeCode) {
       throw new Error("Exchange is required.");
-    }
-
-    const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-    if (!user) {
-      return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
     const selectedExchange = await prisma.eodhdExchange.findUnique({

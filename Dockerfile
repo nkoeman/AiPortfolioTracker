@@ -5,8 +5,7 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# Use npm install when no lockfile is present
-RUN if [ -f package-lock.json ]; then npm ci --prefer-offline; else npm install --prefer-offline; fi
+RUN npm install --prefer-offline
 
 FROM base AS test
 WORKDIR /app
@@ -18,6 +17,16 @@ CMD ["npm", "test"]
 
 FROM base AS builder
 WORKDIR /app
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+ARG NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/
+ARG NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+ENV NEXT_PUBLIC_CLERK_SIGN_IN_URL=${NEXT_PUBLIC_CLERK_SIGN_IN_URL}
+ENV NEXT_PUBLIC_CLERK_SIGN_UP_URL=${NEXT_PUBLIC_CLERK_SIGN_UP_URL}
+ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=${NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL}
+ENV NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=${NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public

@@ -1,0 +1,8 @@
+www.etfminded.com {
+  redir https://etfminded.com{uri} permanent
+}
+
+etfminded.com {
+  encode gzip zstd
+  reverse_proxy web:3000
+}

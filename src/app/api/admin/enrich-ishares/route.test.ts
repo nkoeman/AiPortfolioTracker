@@ -1,26 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-  userFindUnique: vi.fn(),
+  getCurrentAppUser: vi.fn(),
   ensureIsharesExposureSnapshots: vi.fn(),
   backfillNormalizeExposureSnapshots: vi.fn()
 }));
 
-vi.mock("next-auth", () => ({
-  getServerSession: mocks.getServerSession
-}));
-
-vi.mock("@/lib/auth/options", () => ({
-  authOptions: {}
-}));
-
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: mocks.userFindUnique
-    }
-  }
+vi.mock("@/lib/auth/appUser", () => ({
+  getCurrentAppUser: mocks.getCurrentAppUser
 }));
 
 vi.mock("@/lib/ishares/ensureIsharesExposure", () => ({
@@ -35,15 +22,13 @@ import { POST } from "@/app/api/admin/enrich-ishares/route";
 
 describe("POST /api/admin/enrich-ishares", () => {
   beforeEach(() => {
-    mocks.getServerSession.mockReset();
-    mocks.userFindUnique.mockReset();
+    mocks.getCurrentAppUser.mockReset();
     mocks.ensureIsharesExposureSnapshots.mockReset();
     mocks.backfillNormalizeExposureSnapshots.mockReset();
   });
 
   it("runs a normalization backfill immediately after enrichment", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
-    mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
+    mocks.getCurrentAppUser.mockResolvedValue({ id: "user_1", email: "user@example.com", name: null, clerkUserId: "clerk_1" });
     mocks.ensureIsharesExposureSnapshots.mockResolvedValue({ ready: 2, failed: 0 });
     mocks.backfillNormalizeExposureSnapshots.mockResolvedValue({ scanned: 2, normalized: 2, skipped: 0 });
 

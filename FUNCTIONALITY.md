@@ -68,7 +68,7 @@ It also generates a cached AI insights block for the last 4 weeks.
 ## 2. Runtime stack
 - Next.js 14 App Router + TypeScript
 - Prisma + PostgreSQL
-- NextAuth credentials auth (JWT session strategy)
+- Clerk authentication (`@clerk/nextjs`) with Prisma-backed app user linking
 - EODHD for listing discovery and historical prices
 - ECB SDMX API for FX series
 - OpenFIGI for instrument enrichment
@@ -81,25 +81,29 @@ It also generates a cached AI insights block for the last 4 weeks.
 ### 3.1 Middleware
 `middleware.ts` protects:
 - `/`
+- `/portfolio/:path*`
 - `/import/:path*`
+- `/api/:path*`
 
-Unauthenticated users are redirected to `/login` with `callbackUrl`.
+Unauthenticated users are redirected to Clerk sign-in.
 
 ### 3.2 Server-side auth guards
-Pages and API routes also validate the current session server-side (`getServerSession(...)`) and reject unauthorized access.
+Pages and API routes also resolve the authenticated user server-side via `getCurrentAppUser()` and reject unauthorized access.
 
 ### 3.3 App shell behavior
 `AppShell` shows sidebar + header for app pages, but hides both on:
 - `/login`
 - `/register`
+- `/sign-in`
+- `/sign-up`
 
 ## 4. Current pages
 
 ### 4.1 `/` (Performance)
 Main performance page with:
 - AI insights card
-- Portfolio value card (switch between `Max` and `Last 4 weeks`)
-- Last 4 weeks performance summary + contributors (graph removed from this card)
+- Portfolio value card (range: `Max`, `YTD`, `1Y`, `1M`; metric toggle for value/index/return)
+- `Gainers & losers` card with timeframe dropdown (`Max`, `YTD`, `1Y`, `1M`) and top contributors chart
 
 ### 4.2 `/portfolio` (Portfolio)
 Portfolio composition page with:
@@ -120,14 +124,15 @@ Transactions page with:
   - Amount (`valueEur` fallback to `totalEur`)
 
 ### 4.4 Auth pages
-- `/login`: sign in form with Chief Capital logo
-- `/register`: create account form with Chief Capital logo
+- `/login`: backward-compatible redirect to `/sign-in`
+- `/register`: backward-compatible redirect to `/sign-up`
+- `/sign-in`: Clerk sign-in flow
+- `/sign-up`: Clerk sign-up flow
 
 ## 5. API endpoints
-- `POST /api/auth/register`: register user
-- `GET|POST /api/auth/[...nextauth]`: NextAuth
 - `POST /api/import`: import DeGiro CSV and trigger recent sync
 - `GET /api/ai-summary`: get/generate cached AI insights
+- `GET /api/dashboard/top-movers?range=max|ytd|1y|1m`: get gainers/losers payload for the selected timeframe
 - `POST /api/sync-prices/recent`: sync last ~4 weeks
 - `POST /api/sync-prices/full`: full sync from first transaction date
 - `POST /api/sync-prices`: legacy wrapper (`force=true` => full, else recent)
@@ -271,14 +276,26 @@ This derived weekly series is used in runtime reads (charts and recent analytics
   - `Value (EUR)` (green value line + dotted invested line)
   - `Return (%)` (organic return)
 
-### 14.2 Last 4 weeks card
-- Shows summary metrics and contributors
+### 14.2 Gainers & losers card
+`Gainers & losers` card:
+- Timeframe dropdown options: `Max`, `YTD`, `1Y`, `1M`
+- Initial server render loads only the default range (`max`)
+- Other ranges are fetched on-demand via `GET /api/dashboard/top-movers`
+- Client caches loaded ranges locally to avoid duplicate fetches during range switching
 - Shows window and last-updated metadata
-- Graph removed from this card
+
+Server-side movers service behavior:
+- `getTopMoversByRange(userId, range)` uses in-memory TTL cache keyed by `userId + range + latestDailyDate`
+- Includes in-flight promise dedupe for concurrent requests with the same cache key
+- Weekly conversion avoids O(n²) date matching by pre-indexing daily rows by date
 
 ### 14.3 AI insights card
 - Separate card titled `AI Portfolio insights`
 - Shows one quote-style one-liner + up to 5 bullets
+
+### 14.4 Page-load safeguards
+- Homepage no longer blocks response on synchronous daily valuation backfill when return fields are missing.
+- If a missing cumulative-return segment is detected, a background refresh is queued, while existing `DailyPortfolioValue` rows are rendered immediately.
 
 ## 15. Portfolio page logic (`/portfolio`)
 - Renders `Portfolio exposure` card first, before positions tables
@@ -319,8 +336,12 @@ This derived weekly series is used in runtime reads (charts and recent analytics
 
 ## 18. Environment variables used
 - `DATABASE_URL`
-- `NEXTAUTH_URL`
-- `NEXTAUTH_SECRET`
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
+- `NEXT_PUBLIC_CLERK_SIGN_IN_URL` (optional, default `/sign-in`)
+- `NEXT_PUBLIC_CLERK_SIGN_UP_URL` (optional, default `/sign-up`)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` (optional, default `/`)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` (optional, default `/`)
 - `EODHD_API_KEY`
 - `EODHD_BASE_URL` (optional)
 - `OPENFIGI_API_KEY`
@@ -332,5 +353,5 @@ This derived weekly series is used in runtime reads (charts and recent analytics
 - `OPENAI_TEMPERATURE` (optional, default `0.2`)
 
 ## 19. Notable constraints / caveats
-- `middleware.ts` matcher currently protects `/` and `/import/*`; `/portfolio` is protected by server-side checks in the page itself.
+- `middleware.ts` matcher protects `/`, `/portfolio/*`, `/import/*`, and `/api/*`; server-side guards remain in pages/routes as defense in depth.
 - Position valuation on `/portfolio` currently reads `DailyListingPrice.adjustedClose` for instrument-level metrics.

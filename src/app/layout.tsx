@@ -1,9 +1,13 @@
-﻿import type { Metadata } from "next";
+// ClerkProvider requires NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY at render time.
+// That env var is injected at runtime (not baked into the Docker image),
+// so static prerendering during build would always fail. Force all pages
+// under this layout to render dynamically at request time.
+export const dynamic = "force-dynamic";
+
+import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth/options";
 import { AppShell } from "@/components/AppShell";
 
 const inter = Inter({
@@ -23,15 +27,11 @@ export const metadata: Metadata = {
 
 // Wraps all pages with auth context and top-level navigation.
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const session = await getServerSession(authOptions);
-
   return (
     <html lang="en">
       <body className={inter.variable}>
         <Providers>
-          <AppShell hasSession={Boolean(session)}>
-            {children}
-          </AppShell>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>

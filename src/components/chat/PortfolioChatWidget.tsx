@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useUser } from "@clerk/nextjs";
 import { ChatLauncherButton } from "@/components/chat/ChatLauncherButton";
 import { ChatOverlay } from "@/components/chat/ChatOverlay";
 import type { PortfolioChatApiResult, PortfolioChatMessage } from "@/components/chat/types";
@@ -47,9 +47,9 @@ function parseStoredMessages(raw: string | null): PortfolioChatMessage[] {
 }
 
 export function PortfolioChatWidget() {
-  const { data: session, status } = useSession();
-  const normalizedEmail = session?.user?.email?.trim().toLowerCase() || null;
-  const userKey = status === "authenticated" ? normalizedEmail : null;
+  const { isLoaded, user } = useUser();
+  const normalizedEmail = user?.primaryEmailAddress?.emailAddress?.trim().toLowerCase() || null;
+  const userKey = isLoaded && user ? normalizedEmail : null;
   const storageKey = userKey ? `${STORAGE_KEY_PREFIX}:${userKey}` : null;
 
   const [open, setOpen] = useState(false);

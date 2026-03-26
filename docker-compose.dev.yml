@@ -17,6 +17,12 @@ services:
     environment:
       # Dev-only override: force app to local postgres, never managed prod DB.
       DATABASE_URL: postgresql://postgres:password@db:5432/portfolio
+    ports:
+      - "3000:3000"
+
+  caddy:
+    profiles:
+      - prod-only
 
 volumes:
   postgres_data:

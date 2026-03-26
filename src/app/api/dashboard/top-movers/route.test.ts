@@ -1,25 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getServerSession: vi.fn(),
-  userFindUnique: vi.fn(),
+  getCurrentAppUser: vi.fn(),
   getTopMoversByRange: vi.fn()
 }));
 
-vi.mock("next-auth", () => ({
-  getServerSession: mocks.getServerSession
-}));
-
-vi.mock("@/lib/auth/options", () => ({
-  authOptions: {}
-}));
-
-vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    user: {
-      findUnique: mocks.userFindUnique
-    }
-  }
+vi.mock("@/lib/auth/appUser", () => ({
+  getCurrentAppUser: mocks.getCurrentAppUser
 }));
 
 vi.mock("@/lib/dashboard/topMoversByRange", () => ({
@@ -30,13 +17,12 @@ import { GET } from "@/app/api/dashboard/top-movers/route";
 
 describe("GET /api/dashboard/top-movers", () => {
   beforeEach(() => {
-    mocks.getServerSession.mockReset();
-    mocks.userFindUnique.mockReset();
+    mocks.getCurrentAppUser.mockReset();
     mocks.getTopMoversByRange.mockReset();
   });
 
   it("returns 401 for unauthenticated requests", async () => {
-    mocks.getServerSession.mockResolvedValue(null);
+    mocks.getCurrentAppUser.mockResolvedValue(null);
     const response = await GET(new Request("http://localhost/api/dashboard/top-movers?range=max"));
     const body = await response.json();
 
@@ -45,8 +31,7 @@ describe("GET /api/dashboard/top-movers", () => {
   });
 
   it("returns 400 for an invalid range", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
-    mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
+    mocks.getCurrentAppUser.mockResolvedValue({ id: "user_1", email: "user@example.com", name: null, clerkUserId: "clerk_1" });
 
     const response = await GET(new Request("http://localhost/api/dashboard/top-movers?range=bad"));
     const body = await response.json();
@@ -56,8 +41,7 @@ describe("GET /api/dashboard/top-movers", () => {
   });
 
   it("returns movers payload for a valid range", async () => {
-    mocks.getServerSession.mockResolvedValue({ user: { email: "user@example.com" } });
-    mocks.userFindUnique.mockResolvedValue({ id: "user_1" });
+    mocks.getCurrentAppUser.mockResolvedValue({ id: "user_1", email: "user@example.com", name: null, clerkUserId: "clerk_1" });
     mocks.getTopMoversByRange.mockResolvedValue({
       range: "max",
       label: "Max",

@@ -1,4 +1,3 @@
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { format, startOfDay } from "date-fns";
 import { type PortfolioChartPoint } from "@/components/PortfolioChart";
@@ -8,7 +7,7 @@ import { BrandMotif } from "@/components/BrandMotif";
 import { PortfolioValueCard } from "@/components/PortfolioValueCard";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Section } from "@/components/layout/Section";
-import { authOptions } from "@/lib/auth/options";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import {
   type PerformanceRangeOption
 } from "@/lib/charts/performanceRange";
@@ -60,11 +59,8 @@ function queueDailySeriesRefresh(userId: string, fromDate: Date) {
 }
 
 export default async function PerformancePage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
-
-  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-  if (!user) redirect("/login");
+  const user = await getCurrentAppUser();
+  if (!user) redirect("/sign-in");
 
   // Fetch transactions and daily portfolio values in parallel — neither depends on the other.
   const [transactions, initialDailyValues] = await Promise.all([

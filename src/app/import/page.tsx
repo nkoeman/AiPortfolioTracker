@@ -1,4 +1,3 @@
-import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { format, startOfDay } from "date-fns";
 import { BrandMotif } from "@/components/BrandMotif";
@@ -7,7 +6,7 @@ import { SyncPricesButton } from "@/components/SyncPricesButton";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Section } from "@/components/layout/Section";
 import { Card } from "@/components/layout/Card";
-import { authOptions } from "@/lib/auth/options";
+import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { ensureEodhdExchangeDirectoryLoaded } from "@/lib/eodhd/exchanges";
 import { prisma } from "@/lib/prisma";
 
@@ -19,11 +18,8 @@ function toNumber(value: unknown) {
 
 // Renders transaction data update actions, CSV import, and a full transaction overview.
 export default async function TransactionsPage() {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.email) redirect("/login");
-
-  const user = await prisma.user.findUnique({ where: { email: session.user.email } });
-  if (!user) redirect("/login");
+  const user = await getCurrentAppUser();
+  if (!user) redirect("/sign-in");
 
   try {
     await ensureEodhdExchangeDirectoryLoaded();
