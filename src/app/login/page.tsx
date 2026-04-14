@@ -10,6 +10,6 @@ type LoginPageProps = {
 };
 
 export default function LoginPage({ searchParams }: LoginPageProps) {
-  const callback = searchParams?.redirect_url || searchParams?.callbackUrl || "/";
+  const callback = searchParams?.redirect_url || searchParams?.callbackUrl || "/app";
   permanentRedirect(`/sign-in?redirect_url=${encodeURIComponent(callback)}`);
 }

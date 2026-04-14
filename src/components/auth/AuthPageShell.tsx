@@ -14,8 +14,8 @@ export function AuthPageShell({ eyebrow, title, subtitle, children }: AuthPageSh
         <div className="grid w-full grid-cols-1 gap-6 lg:grid-cols-2">
           <section className="hidden lg:flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-10 shadow-sm">
             <Image
-              src="/brand/Chief_Capital_logo.png"
-              alt="Chief Capital logo"
+              src="/brand/ETFMinded_logo_full.png"
+              alt="ETFMinded logo"
               width={281}
               height={64}
               priority
@@ -35,8 +35,8 @@ export function AuthPageShell({ eyebrow, title, subtitle, children }: AuthPageSh
             <div className="w-full max-w-md">
               <div className="mb-4 space-y-2 lg:hidden">
                 <Image
-                  src="/brand/Chief_Capital_logo.png"
-                  alt="Chief Capital logo"
+                  src="/brand/ETFMinded_logo_full.png"
+                  alt="ETFMinded logo"
                   width={220}
                   height={50}
                   priority

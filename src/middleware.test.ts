@@ -1,38 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-function isPublicRoute(pathname: string): boolean {
-  return (
-    /^\/login(\/.*)?$/.test(pathname) ||
-    /^\/register(\/.*)?$/.test(pathname) ||
-    /^\/sign-in(\/.*)?$/.test(pathname) ||
-    /^\/sign-up(\/.*)?$/.test(pathname)
-  );
+function isProtectedRoute(pathname: string): boolean {
+  return /^\/app(\/.*)?$/.test(pathname) || /^\/api(\/.*)?$/.test(pathname);
 }
 
-describe("middleware: public route matching", () => {
+describe("middleware: protected route matching", () => {
   it.each([
-    "/login",
-    "/login/sso-callback",
-    "/register",
-    "/register/sso-callback",
-    "/sign-in",
-    "/sign-in/factor-one",
-    "/sign-up",
-    "/sign-up/verify-email-address"
-  ])("%s is a public route (no auth redirect)", (path) => {
-    expect(isPublicRoute(path)).toBe(true);
+    "/app",
+    "/app/portfolio",
+    "/app/import",
+    "/api/sync-prices/recent",
+    "/api/portfolio/exposure",
+    "/api/ai-summary"
+  ])("%s is a protected route", (path) => {
+    expect(isProtectedRoute(path)).toBe(true);
   });
 
   it.each([
     "/",
     "/portfolio",
     "/import",
-    "/import/something",
-    "/api/sync-prices/recent",
-    "/api/portfolio/exposure",
-    "/api/ai-summary"
-  ])("%s is a protected route", (path) => {
-    expect(isPublicRoute(path)).toBe(false);
+    "/sign-in",
+    "/sign-up",
+    "/login",
+    "/register"
+  ])("%s is a public route", (path) => {
+    expect(isProtectedRoute(path)).toBe(false);
   });
 });
 

@@ -86,6 +86,7 @@ It also generates a cached AI insights block for the last 4 weeks.
 - `/api/:path*`
 
 Unauthenticated users are redirected to Clerk sign-in.
+`redirect_url` is now passed as a relative in-app path (`pathname + search`) to avoid proxy-origin leakage (for example `localhost` showing up in production redirect params).
 
 ### 3.2 Server-side auth guards
 Pages and API routes also resolve the authenticated user server-side via `getCurrentAppUser()` and reject unauthorized access.
@@ -126,8 +127,8 @@ Transactions page with:
 ### 4.4 Auth pages
 - `/login`: backward-compatible redirect to `/sign-in`
 - `/register`: backward-compatible redirect to `/sign-up`
-- `/sign-in`: Clerk sign-in flow
-- `/sign-up`: Clerk sign-up flow
+- `/sign-in`: Clerk sign-in flow (embedded component, no iframe)
+- `/sign-up`: Clerk sign-up flow (embedded component, no iframe)
 
 ## 5. API endpoints
 - `POST /api/import`: import DeGiro CSV and trigger recent sync
@@ -355,3 +356,31 @@ Server-side movers service behavior:
 ## 19. Notable constraints / caveats
 - `middleware.ts` matcher protects `/`, `/portfolio/*`, `/import/*`, and `/api/*`; server-side guards remain in pages/routes as defense in depth.
 - Position valuation on `/portfolio` currently reads `DailyListingPrice.adjustedClose` for instrument-level metrics.
+
+## 20. Deployment topology (dev vs prod)
+
+### 20.1 Production (`docker-compose.yml`)
+- Public entrypoint is `caddy` only (ports `80`/`443`).
+- `web` is internal-only (`expose: 3000`, no public `ports` mapping).
+- TLS is managed automatically by Caddy (Let's Encrypt).
+- Domain behavior:
+  - `https://www.etfminded.com` redirects to `https://etfminded.com`
+  - `https://etfminded.com` reverse-proxies to `web:3000`
+
+### 20.2 Development (`docker-compose.dev.yml`)
+- Adds local `db` (`postgres:16`) and overrides `web` database URL to local Postgres.
+- Re-exposes `web` on `3000` for local development convenience.
+- Production Caddy service is disabled in dev override.
+
+### 20.3 Reverse-proxy headers
+- Caddy forwards host/proto headers upstream.
+- App auth redirects are designed to remain stable behind proxies by using relative `redirect_url`.
+
+## 21. Migration and runtime operations
+- Schema changes must be applied in production with:
+  - `docker compose exec -T web npx prisma migrate deploy`
+- `migrate deploy` should run on every production deploy (idempotent, safe).
+- Build success alone is insufficient if DB schema is behind application code.
+- Known failure signatures and causes:
+  - `P2022` (`User.clerkUserId` missing): migration not applied.
+  - `P2011` (`passwordHash` null constraint): DB schema drift vs Clerk user creation flow.

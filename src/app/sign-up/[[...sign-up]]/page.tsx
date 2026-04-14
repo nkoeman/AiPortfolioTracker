@@ -1,17 +1,10 @@
 export const dynamic = "force-dynamic";
 
-import { auth } from "@clerk/nextjs/server";
 import { SignUp } from "@clerk/nextjs";
-import { redirect } from "next/navigation";
 import { AuthPageShell } from "@/components/auth/AuthPageShell";
 import { authClerkAppearance } from "@/components/auth/clerkAppearance";
 
 export default async function SignUpPage() {
-  const { userId } = await auth();
-  if (userId) {
-    redirect("/");
-  }
-
   return (
     <AuthPageShell
       eyebrow="Portfolio intelligence"
@@ -22,8 +15,8 @@ export default async function SignUpPage() {
         path="/sign-up"
         routing="path"
         signInUrl="/sign-in"
-        forceRedirectUrl="/"
-        fallbackRedirectUrl="/"
+        forceRedirectUrl="/app"
+        fallbackRedirectUrl="/app"
         appearance={authClerkAppearance}
       />
     </AuthPageShell>

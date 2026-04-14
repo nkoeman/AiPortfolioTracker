@@ -10,7 +10,8 @@ export function buildTransactionUniqueKey(
   price: number | null,
   totalEur: number | null,
   productName: string,
-  transactionCosts: number | null = null
+  transactionCosts: number | null = null,
+  sourceIdentity: string | null = null
 ) {
   const raw = [
     userId,
@@ -21,7 +22,8 @@ export function buildTransactionUniqueKey(
     price ?? "",
     totalEur ?? "",
     productName,
-    transactionCosts ?? ""
+    transactionCosts ?? "",
+    sourceIdentity ?? ""
   ].join("|");
 
   return crypto.createHash("sha256").update(raw).digest("hex");

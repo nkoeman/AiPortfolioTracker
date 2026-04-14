@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { resolveOrCreateListingForTransaction } from "@/lib/eodhd/mapping";
 import { parseDegiroCsv } from "@/lib/import/degiroCsv";
+import {
+  buildFallbackTransactionKey,
+  buildImportIdentity,
+  normalizeOrderId
+} from "@/lib/import/transactionIdentity";
 import { ensureInstrumentProfiles } from "@/lib/enrichment";
 import { enrichInstrumentsFromOpenFigi } from "@/lib/openfigi/enrich";
 import { kickoffIsharesExposureSnapshots } from "@/lib/ishares/ensureIsharesExposure";
@@ -10,6 +15,26 @@ import { prisma } from "@/lib/prisma";
 import { buildTransactionUniqueKey } from "@/lib/transactions/buildUniqueKey";
 
 export const runtime = "nodejs";
+
+type PreparedImportRow = {
+  userId: string;
+  instrumentId: string;
+  listingId: string | null;
+  importBatchId: string;
+  externalOrderId: string | null;
+  tradeAt: Date;
+  quantity: number;
+  price: number | null;
+  valueEur: number | null;
+  totalEur: number | null;
+  currency: string;
+  exchange: string;
+  exchangeCode: string;
+  type: "TRADE";
+  uniqueKey: string;
+  dedupeKey: string;
+  isin: string;
+};
 
 // Imports a DeGiro CSV, resolves MIC-first listing mapping, and triggers background price sync.
 export async function POST(req: Request) {
@@ -99,23 +124,10 @@ export async function POST(req: Request) {
     });
 
     const listingCache = new Map<string, string | null>();
+    const seenInputDedupeKeys = new Set<string>();
+    let duplicateRowsInUpload = 0;
 
-    const prepared = [] as Array<{
-      userId: string;
-      instrumentId: string;
-      listingId: string | null;
-      importBatchId: string;
-      tradeAt: Date;
-      quantity: number;
-      price: number | null;
-      valueEur: number | null;
-      totalEur: number | null;
-      currency: string;
-      exchange: string;
-      exchangeCode: string;
-      type: "TRADE";
-      uniqueKey: string;
-    }>;
+    const prepared: PreparedImportRow[] = [];
 
     for (const row of rows) {
       const instrument = instrumentMap.get(row.isin);
@@ -137,11 +149,29 @@ export async function POST(req: Request) {
         listingCache.set(listingKey, listingId);
       }
 
+      const identity = buildImportIdentity({
+        orderId: row.orderId,
+        tradeAt: row.tradeAt,
+        isin: row.isin,
+        quantity: row.quantity
+      });
+
+      if (seenInputDedupeKeys.has(identity.key)) {
+        duplicateRowsInUpload += 1;
+        continue;
+      }
+      seenInputDedupeKeys.add(identity.key);
+
+      const normalizedOrderId = normalizeOrderId(row.orderId);
+      const sourceIdentity =
+        normalizedOrderId ?? buildFallbackTransactionKey(row.tradeAt, row.isin, row.quantity);
+
       prepared.push({
         userId: user.id,
         instrumentId: instrument.id,
         listingId: listingId ?? null,
         importBatchId: importBatch.id,
+        externalOrderId: normalizedOrderId,
         tradeAt: row.tradeAt,
         quantity: row.quantity,
         price: row.price,
@@ -159,20 +189,104 @@ export async function POST(req: Request) {
           row.quantity,
           row.price,
           row.totalEur,
-          row.product
-        )
+          row.product,
+          null,
+          sourceIdentity
+        ),
+        dedupeKey: identity.key,
+        isin: row.isin
       });
     }
 
-    const result = await prisma.transaction.createMany({ data: prepared, skipDuplicates: true });
+    const orderIds = Array.from(
+      new Set(
+        prepared.map((row) => row.externalOrderId).filter((value): value is string => Boolean(value))
+      )
+    );
 
-    const unmappedRows = prepared.filter((row) => !row.listingId).length;
+    const existingOrderIds = new Set<string>();
+    if (orderIds.length) {
+      const existingOrderRows = await prisma.transaction.findMany({
+        where: {
+          userId: user.id,
+          externalOrderId: { in: orderIds }
+        },
+        select: { externalOrderId: true }
+      });
+
+      for (const row of existingOrderRows) {
+        if (row.externalOrderId) existingOrderIds.add(row.externalOrderId);
+      }
+    }
+
+    const fallbackRows = prepared;
+    const existingFallbackKeys = new Set<string>();
+    if (fallbackRows.length) {
+      const fallbackInstrumentIds = Array.from(new Set(fallbackRows.map((row) => row.instrumentId)));
+      const fallbackTradeAts = Array.from(new Set(fallbackRows.map((row) => row.tradeAt.getTime()))).map(
+        (value) => new Date(value)
+      );
+
+      const existingFallbackRows = await prisma.transaction.findMany({
+        where: {
+          userId: user.id,
+          externalOrderId: null,
+          instrumentId: { in: fallbackInstrumentIds },
+          tradeAt: { in: fallbackTradeAts }
+        },
+        select: {
+          tradeAt: true,
+          quantity: true,
+          instrument: { select: { isin: true } }
+        }
+      });
+
+      for (const row of existingFallbackRows) {
+        existingFallbackKeys.add(
+          buildFallbackTransactionKey(row.tradeAt, row.instrument.isin, Number(row.quantity))
+        );
+      }
+    }
+
+    const insertableRows = prepared.filter((row) => {
+      if (row.externalOrderId) {
+        if (existingOrderIds.has(row.externalOrderId)) return false;
+      }
+
+      const fallbackKey = buildFallbackTransactionKey(row.tradeAt, row.isin, row.quantity);
+      return !existingFallbackKeys.has(fallbackKey);
+    });
+
+    const result = await prisma.transaction.createMany({
+      data: insertableRows.map((row) => ({
+        userId: row.userId,
+        instrumentId: row.instrumentId,
+        listingId: row.listingId,
+        importBatchId: row.importBatchId,
+        externalOrderId: row.externalOrderId,
+        tradeAt: row.tradeAt,
+        quantity: row.quantity,
+        price: row.price,
+        valueEur: row.valueEur,
+        totalEur: row.totalEur,
+        currency: row.currency,
+        exchange: row.exchange,
+        exchangeCode: row.exchangeCode,
+        type: row.type,
+        uniqueKey: row.uniqueKey
+      })),
+      skipDuplicates: true
+    });
+
+    const unmappedRows = insertableRows.filter((row) => !row.listingId).length;
     const warning =
       unmappedRows > 0
         ? "Some instruments could not be mapped; they will be excluded from valuation until mapping succeeds automatically."
         : null;
 
-    const listingIds = Array.from(new Set(prepared.map((row) => row.listingId).filter((id): id is string => Boolean(id))));
+    const listingIds = Array.from(
+      new Set(insertableRows.map((row) => row.listingId).filter((id): id is string => Boolean(id)))
+    );
 
     void syncLast4WeeksForUser(user.id).catch((error) => {
       console.error("[prices.sync] import-triggered sync failed", { userId: user.id, error });
@@ -182,6 +296,7 @@ export async function POST(req: Request) {
       imported: result.count,
       totalRows: rows.length,
       skipped: rows.length - result.count,
+      skippedDuplicatesInUpload: duplicateRowsInUpload,
       syncTriggered: true,
       mappedListings: listingIds.length,
       unmappedRows,

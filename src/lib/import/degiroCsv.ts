@@ -5,6 +5,7 @@ export type DegiroTransaction = {
   tradeAt: Date;
   product: string;
   isin: string;
+  orderId: string | null;
   exchange: string;
   quantity: number;
   price: number | null;
@@ -35,6 +36,15 @@ function parseTradeDate(dateValue: string, timeValue?: string) {
   return parsed;
 }
 
+function findHeaderValue(row: Record<string, string>, headerAlias: string) {
+  const normalizedAlias = headerAlias.replace(/\s+/g, "").toLowerCase();
+  for (const [key, value] of Object.entries(row)) {
+    const normalizedKey = key.replace(/\s+/g, "").toLowerCase();
+    if (normalizedKey === normalizedAlias) return value;
+  }
+  return "";
+}
+
 // Transforms a DeGiro CSV export into normalized transaction rows used by the import pipeline.
 export function parseDegiroCsv(csv: string): DegiroTransaction[] {
   const records = parse(csv, {
@@ -58,6 +68,7 @@ export function parseDegiroCsv(csv: string): DegiroTransaction[] {
       const totalEur = normalizeDecimal(row["Totaal EUR"] ?? row["Totaal EUR "]);
       const product = row["Product"] || "";
       const isin = row["ISIN"] || "";
+      const orderId = findHeaderValue(row, "Order ID").trim() || null;
       const currency = row["Valuta"] || "EUR";
 
       if (!tradeAt || !isin || !product || quantity === null) return null;
@@ -66,6 +77,7 @@ export function parseDegiroCsv(csv: string): DegiroTransaction[] {
         tradeAt,
         product,
         isin,
+        orderId,
         exchange,
         quantity,
         price,

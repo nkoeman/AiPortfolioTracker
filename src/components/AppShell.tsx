@@ -17,6 +17,9 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const hideShell =
+    pathname === "/" ||
+    pathname === "/portfolio" ||
+    pathname === "/import" ||
     pathname === "/login" ||
     pathname === "/register" ||
     pathname.startsWith("/sign-in") ||
@@ -35,16 +38,16 @@ export function AppShell({ children }: AppShellProps) {
       <aside className="sidebar">
         <div className="brand">
           <Image
-            src="/brand/Chief_Capital_logo.png"
-            alt="Chief Capital logo"
+            src="/brand/ETFMinded_logo_full.png"
+            alt="ETFMinded logo"
             width={420}
             height={120}
             className="brand-logo-full"
             priority
           />
           <Image
-            src="/brand/Chief_Capital_logo.png"
-            alt="Chief Capital mark"
+            src="/brand/ETFMinded_logo_only.png"
+            alt="ETFMinded mark"
             width={120}
             height={120}
             className="brand-logo-mark"
@@ -79,8 +82,8 @@ export function AppShell({ children }: AppShellProps) {
       <aside className={`sidebar-drawer${mobileNavOpen ? " open" : ""}`} aria-hidden={!mobileNavOpen}>
         <div className="brand">
           <Image
-            src="/brand/Chief_Capital_logo.png"
-            alt="Chief Capital logo"
+            src="/brand/ETFMinded_logo_full.png"
+            alt="ETFMinded logo"
             width={420}
             height={120}
             className="brand-logo-full"
@@ -114,8 +117,8 @@ export function AppShell({ children }: AppShellProps) {
             </span>
           </button>
           <Image
-            src="/brand/Chief_Capital_logo.png"
-            alt="Chief Capital"
+            src="/brand/ETFMinded_logo_full.png"
+            alt="ETFMinded"
             width={180}
             height={52}
             className="mobile-topbar-logo"

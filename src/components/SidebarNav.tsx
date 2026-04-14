@@ -4,9 +4,9 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const LINKS = [
-  { href: "/", label: "Performance" },
-  { href: "/portfolio", label: "Portfolio" },
-  { href: "/import", label: "Transactions" }
+  { href: "/app", label: "Performance" },
+  { href: "/app/portfolio", label: "Portfolio" },
+  { href: "/app/import", label: "Transactions" }
 ];
 
 type SidebarNavProps = {
@@ -19,7 +19,7 @@ export function SidebarNav({ onNavigate }: SidebarNavProps) {
   return (
     <div className="sidebar-links">
       {LINKS.map((link) => {
-        const isActive = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
+        const isActive = link.href === "/app" ? pathname === "/app" : pathname.startsWith(link.href);
         return (
           <Link
             key={link.href}

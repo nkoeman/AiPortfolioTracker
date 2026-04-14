@@ -16,12 +16,12 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Chief Capital",
-  description: "Chief Capital portfolio intelligence dashboard",
+  title: "ETFMinded",
+  description: "ETFMinded portfolio intelligence dashboard",
   icons: {
-    icon: "/brand/Chief_Capital_icon.png",
-    shortcut: "/brand/Chief_Capital_icon.png",
-    apple: "/brand/Chief_Capital_icon.png"
+    icon: "/brand/ETFMinded_logo_only.png",
+    shortcut: "/brand/ETFMinded_logo_only.png",
+    apple: "/brand/ETFMinded_logo_only.png"
   }
 };
 
