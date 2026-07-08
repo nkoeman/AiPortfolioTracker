@@ -68,31 +68,33 @@ export function PortfolioAiSummaryCardClient() {
     data: null
   });
 
+  const loadSummary = React.useCallback(async (mountedCheck?: () => boolean) => {
+    try {
+      const response = await fetch("/api/ai-summary");
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "AI summary request failed");
+      }
+      const data = normalizeSummaryState((await response.json()) as PortfolioAiSummaryState);
+      if (!mountedCheck || mountedCheck()) {
+        setState({ loading: false, error: null, data });
+      }
+    } catch (error) {
+      if (!mountedCheck || mountedCheck()) {
+        const message = error instanceof Error ? error.message : "AI summary request failed";
+        setState({ loading: false, error: message, data: emptyState });
+      }
+    }
+  }, []);
+
   useEffect(() => {
     let mounted = true;
-    const run = async () => {
-      try {
-        const response = await fetch("/api/ai-summary");
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || "AI summary request failed");
-        }
-        const data = normalizeSummaryState((await response.json()) as PortfolioAiSummaryState);
-        if (mounted) {
-          setState({ loading: false, error: null, data });
-        }
-      } catch (error) {
-        if (mounted) {
-          const message = error instanceof Error ? error.message : "AI summary request failed";
-          setState({ loading: false, error: message, data: emptyState });
-        }
-      }
-    };
-    run();
+    setState((current) => ({ ...current, loading: true }));
+    void loadSummary(() => mounted);
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [loadSummary]);
 
   const content = useMemo(() => {
     if (state.loading) {
@@ -101,7 +103,7 @@ export function PortfolioAiSummaryCardClient() {
           <div className="row">
             <div>
               <div className="section-title">Monthly Briefing</div>
-              <h2>What happend in your portfolio</h2>
+              <h2>What happened in your portfolio</h2>
               <small>Pattern-based analysis of recent performance. Not financial advice.</small>
             </div>
           </div>
@@ -114,15 +116,33 @@ export function PortfolioAiSummaryCardClient() {
       return (
         <div className="card stack">
           <div className="section-title">Monthly Briefing</div>
-          <h2>What happend in your portfolio</h2>
+          <h2>What happened in your portfolio</h2>
           <small>Pattern-based analysis of recent performance. Not financial advice.</small>
           <p>AI insights currently unavailable.</p>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              setState((current) => ({ ...current, loading: true, error: null }));
+              void loadSummary();
+            }}
+          >
+            Retry
+          </button>
         </div>
       );
     }
 
-    return <PortfolioAiSummaryCard state={state.data ?? emptyState} />;
-  }, [state]);
+    return (
+      <PortfolioAiSummaryCard
+        state={state.data ?? emptyState}
+        onRegenerate={() => {
+          setState((current) => ({ ...current, loading: true, error: null }));
+          void loadSummary();
+        }}
+      />
+    );
+  }, [loadSummary, state]);
 
   return content;
 }

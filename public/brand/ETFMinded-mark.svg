@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ETFMinded icon">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B703A"/>
+      <stop offset="100%" stop-color="#239158"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect x="56" y="56" width="912" height="912" rx="200" fill="url(#g)" filter="url(#shadow)"/>
+  <text x="512" y="512"
+        text-anchor="middle"
+        dominant-baseline="central"
+        font-family="EB Garamond, Georgia, 'Times New Roman', serif"
+        font-size="618"
+        font-weight="700"
+        fill="#FFFFFF"
+        stroke="#FFFFFF"
+        stroke-width="9"
+        paint-order="stroke">E</text>
+</svg>

@@ -9,7 +9,6 @@ import {
   Sector,
   Tooltip
 } from "recharts";
-import { SelectMenu } from "@/components/SelectMenu";
 
 type PortfolioExposureChartKey = "region" | "development" | "country" | "sector";
 
@@ -32,24 +31,20 @@ type PortfolioExposureChartsProps = {
 
 const CHART_OPTIONS: Array<{ value: PortfolioExposureChartKey; label: string }> = [
   { value: "region", label: "Region" },
-  { value: "development", label: "Development" },
-  { value: "country", label: "Country" },
   { value: "sector", label: "Sector" }
 ];
 
 const SLICE_COLORS = [
-  "#0f766e",
-  "#16a34a",
-  "#0891b2",
-  "#7c3aed",
-  "#ea580c",
-  "#e11d48",
-  "#4f46e5",
-  "#65a30d",
-  "#475569"
+  "#2a5d6e",
+  "#4b6f92",
+  "#5f7f4f",
+  "#7d5e9e",
+  "#8b6e3a",
+  "#9f5561",
+  "#556e9f",
+  "#6d7f7a",
+  "#708090"
 ];
-
-const regionDisplay = new Intl.DisplayNames(["en"], { type: "region" });
 
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(2)}%`;
@@ -59,6 +54,13 @@ function sliceColor(key: string, index: number) {
   if (key === "NO_DATA") return "#cbd5e1";
   if (key === "OTHER") return "#94a3b8";
   return SLICE_COLORS[index % SLICE_COLORS.length];
+}
+
+function centerNameClass(label: string | undefined) {
+  const length = label?.length ?? 0;
+  if (length > 24) return " compact";
+  if (length > 17) return " medium";
+  return "";
 }
 
 function renderActiveShape(props: any) {
@@ -72,6 +74,10 @@ function renderActiveShape(props: any) {
     fill,
     payload
   } = props;
+  const label = typeof payload?.label === "string" ? payload.label : "Exposure";
+  const value = typeof payload?.value === "number" ? payload.value : 1;
+  const usableWidth = Math.max(64, innerRadius * 1.7);
+  const usableHeight = Math.max(54, innerRadius * 1.28);
 
   return (
     <g>
@@ -94,9 +100,22 @@ function renderActiveShape(props: any) {
         fill={fill}
         opacity={0.22}
       />
-      <text x={cx} y={cy} textAnchor="middle" dominantBaseline="central" className="portfolio-exposure-center">
-        {payload?.label}
-      </text>
+      <foreignObject
+        x={cx - usableWidth / 2}
+        y={cy - usableHeight / 2}
+        width={usableWidth}
+        height={usableHeight}
+        className="portfolio-exposure-center-object"
+      >
+        <div
+          className="portfolio-exposure-center"
+          title={`${label}: ${formatPercent(value)}`}
+          aria-label={`${label}: ${formatPercent(value)}`}
+        >
+          <div className="portfolio-exposure-center-value">{formatPercent(value)}</div>
+          <div className={`portfolio-exposure-center-label${centerNameClass(label)}`}>{label}</div>
+        </div>
+      </foreignObject>
     </g>
   );
 }
@@ -107,15 +126,6 @@ export function PortfolioExposureCharts({ asOf }: PortfolioExposureChartsProps) 
   const [payload, setPayload] = useState<PortfolioExposureResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 700px)");
-    const update = () => setIsMobile(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -156,41 +166,36 @@ export function PortfolioExposureCharts({ asOf }: PortfolioExposureChartsProps) 
     setActiveIndex(0);
   }, [view, payload]);
 
-  const rawSlices = payload?.charts[view] || [];
-  const slices = rawSlices.map((slice) => {
-    if (view !== "country") return slice;
-    if (slice.key === "OTHER" || slice.key === "CASH" || slice.key === "NO_DATA") return slice;
-    const label = regionDisplay.of(slice.key);
-    return {
-      ...slice,
-      label: label && label.toUpperCase() !== slice.key ? label : slice.label
-    };
-  });
-  const chartMeta = payload?.chartMeta[view] || { coverage: 0, noData: 0 };
-  const legendRows = isMobile ? slices.slice(0, 4) : slices;
+  const activeView = view === "sector" ? "sector" : "region";
+  const rawSlices = payload?.charts[activeView] || [];
+  const slices = rawSlices;
+  const chartMeta = payload?.chartMeta[activeView] || { coverage: 0, noData: 0 };
+  const legendRows = slices;
 
   return (
     <div className="stack portfolio-exposure-panel">
       <div className="portfolio-exposure-header">
         <div>
-          <div className="section-title">Exposure Analytics</div>
-          <h2>Portfolio exposure</h2>
+          <h2 className="card-title">Portfolio exposure</h2>
+        </div>
+        <div className="portfolio-exposure-controls">
+          <div className="range-pills" role="tablist" aria-label="Exposure view">
+            {CHART_OPTIONS.map((entry) => (
+              <button
+                key={entry.value}
+                type="button"
+                className={`range-pill${activeView === entry.value ? " active" : ""}`}
+                onClick={() => setView(entry.value)}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
           {payload ? (
             <div className="portfolio-exposure-meta">
-              <span>Exposure coverage: {Math.round(chartMeta.coverage * 100)}%</span>
-              <span>No data: {Math.round(chartMeta.noData * 100)}%</span>
-              <span>As of {payload.asOfDate}</span>
+              Exposure coverage {Math.round(chartMeta.coverage * 100)}% · No data {Math.round(chartMeta.noData * 100)}% · As of {payload.asOfDate}
             </div>
           ) : null}
-        </div>
-        <div className="portfolio-control portfolio-exposure-control">
-          <SelectMenu
-            id="portfolio-exposure-view"
-            ariaLabel="Exposure view"
-            value={view}
-            options={CHART_OPTIONS.map((entry) => ({ value: entry.value, label: entry.label }))}
-            onChange={(nextValue) => setView(nextValue as PortfolioExposureChartKey)}
-          />
         </div>
       </div>
 
@@ -212,7 +217,7 @@ export function PortfolioExposureCharts({ asOf }: PortfolioExposureChartsProps) 
                   nameKey="label"
                   innerRadius="48%"
                   outerRadius="78%"
-                  paddingAngle={2}
+                  paddingAngle={0}
                   activeIndex={activeIndex}
                   activeShape={renderActiveShape}
                   onMouseEnter={(_, index) => setActiveIndex(index)}

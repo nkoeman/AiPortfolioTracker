@@ -103,32 +103,10 @@ function formatSignedEur(value: number) {
   return eurFormatter.format(value);
 }
 
-function splitLabelToTwoLines(value: string, maxChars = 24): [string, string?] {
+function truncateLabel(value: string, maxChars = 24) {
   const clean = String(value || "").trim();
-  if (!clean) return [""];
-  if (clean.length <= maxChars) return [clean];
-
-  const words = clean.split(/\s+/);
-  let lineOne = "";
-  let lineTwo = "";
-  for (const word of words) {
-    const candidate = lineOne ? `${lineOne} ${word}` : word;
-    if (candidate.length <= maxChars) {
-      lineOne = candidate;
-      continue;
-    }
-    lineTwo = lineTwo ? `${lineTwo} ${word}` : word;
-  }
-
-  if (!lineTwo) {
-    return [clean.slice(0, maxChars), `${clean.slice(maxChars, maxChars * 2)}${clean.length > maxChars * 2 ? "..." : ""}`];
-  }
-
-  if (lineTwo.length > maxChars) {
-    lineTwo = `${lineTwo.slice(0, Math.max(0, maxChars - 3))}...`;
-  }
-
-  return [lineOne, lineTwo];
+  if (!clean || clean.length <= maxChars) return clean;
+  return `${clean.slice(0, Math.max(1, maxChars - 1))}\u2026`;
 }
 
 function renderNameTick(
@@ -139,18 +117,12 @@ function renderNameTick(
   const y = Number(props.y ?? 0);
   const raw = props.payload?.value ?? "";
   if (!Number.isFinite(x) || !Number.isFinite(y)) return <g />;
-  const [lineOne, lineTwo] = splitLabelToTwoLines(String(raw), maxChars);
+  const label = truncateLabel(String(raw), maxChars);
 
   return (
     <text x={x - 8} y={y} textAnchor="end" fill="var(--text)" fontSize={12}>
-      <tspan x={x - 8} dy={lineTwo ? -2 : 4}>
-        {lineOne}
-      </tspan>
-      {lineTwo ? (
-        <tspan x={x - 8} dy={14}>
-          {lineTwo}
-        </tspan>
-      ) : null}
+      <title>{String(raw)}</title>
+      <tspan x={x - 8} dy={4}>{label}</tspan>
     </text>
   );
 }
@@ -173,16 +145,18 @@ function renderValueLabel(props: {
   if (!Number.isFinite(value)) return null;
 
   const isGain = value >= 0;
-  const posX = isGain ? x + width + 8 : x - 8;
+  const isWide = Math.abs(width) >= 86;
+  const posX = isWide ? (isGain ? x + width - 8 : x + 8) : (isGain ? x + width + 8 : x - 8);
 
   return (
     <text
       x={posX}
       y={y + height / 2}
       dy={4}
-      textAnchor={isGain ? "start" : "end"}
-      fill="var(--muted-text)"
+      textAnchor={isWide ? (isGain ? "end" : "start") : (isGain ? "start" : "end")}
+      fill={isWide ? "#fff" : "var(--muted-text)"}
       fontSize={12}
+      fontWeight={isWide ? 600 : 500}
     >
       {formatSignedEur(value)}
     </text>
@@ -260,7 +234,7 @@ export function TopMoversBarChart({ topGainers, topLosers }: TopMoversBarChartPr
   const margin = useMemo(
     () => ({
       top: 8,
-      right: Math.max(36, Math.min(80, Math.round(effectiveWidth * 0.08))),
+      right: Math.max(72, Math.min(112, Math.round(effectiveWidth * 0.14))),
       bottom: 8,
       left: 12
     }),
@@ -268,7 +242,7 @@ export function TopMoversBarChart({ topGainers, topLosers }: TopMoversBarChartPr
   );
   const drawableWidth = Math.max(240, effectiveWidth - margin.left - margin.right);
   const yAxisWidth = useMemo(
-    () => Math.max(120, Math.min(420, Math.round(drawableWidth / 3))),
+    () => Math.max(104, Math.min(420, Math.round(drawableWidth / 3))),
     [drawableWidth]
   );
   const labelMaxChars = useMemo(

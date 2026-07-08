@@ -3,7 +3,8 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
-  LineChart,
+  ComposedChart,
+  Area,
   Line,
   XAxis,
   YAxis,
@@ -31,6 +32,9 @@ type PortfolioChartProps = {
   xAxisDataKey?: string;
   xAxisType?: "number" | "category";
   showLegend?: boolean;
+  showAreaFill?: boolean;
+  showLastPointDot?: boolean;
+  compact?: boolean;
 };
 
 function computeZeroOffset(min: number, max: number) {
@@ -88,7 +92,10 @@ export function PortfolioChart({
   xAxisTicks,
   xAxisDataKey = "date",
   xAxisType = "category",
-  showLegend = true
+  showLegend = true,
+  showAreaFill = false,
+  showLastPointDot = false,
+  compact = false
 }: PortfolioChartProps) {
   const [isMobile, setIsMobile] = useState(false);
 
@@ -103,6 +110,7 @@ export function PortfolioChart({
   const targetTickCount = isMobile ? 4 : 8;
   const tickInterval = Math.max(0, Math.ceil(data.length / targetTickCount) - 1);
   const hasCustomTicks = Boolean(xAxisTicks?.length);
+  const compactMode = compact || isMobile;
   const gradientBaseId = useId().replace(/:/g, "");
   const xTickFormatter = (value: string | number) => {
     if (!xAxisTickFormatter) return String(value);
@@ -162,17 +170,43 @@ export function PortfolioChart({
   const seriesLabel = (currency: string) =>
     currency === "Invested"
       ? "Invested"
-      : currency === "Index"
-        ? "Index"
-        : currency === "ReturnEur"
+      : currency === "ReturnEur"
           ? "Return (\u20AC)"
           : `Value (${currency})`;
+  const areaCurrency = showAreaFill ? currencies[0] : null;
+  const lastPoint = showLastPointDot && areaCurrency && data.length ? data[data.length - 1] : null;
+  const lastPointValue = lastPoint && areaCurrency ? lastPoint[areaCurrency] : null;
+  const renderCompactXAxisTick = (props: any) => {
+    const { x, y, payload } = props;
+    const value = typeof payload?.value === "number" ? payload.value : Number(payload?.value);
+    const label = Number.isFinite(value) ? xTickFormatter(value) : "";
+    if (!label) return <g />;
+
+    const firstTick = xAxisTicks?.[0];
+    const lastTick = xAxisTicks?.[xAxisTicks.length - 1];
+    const anchor =
+      value === firstTick
+        ? "start"
+        : value === lastTick
+          ? "end"
+          : "middle";
+
+    return (
+      <text x={x} y={y + 12} textAnchor={anchor} fill="var(--muted-text)" fontSize={9.5}>
+        {label}
+      </text>
+    );
+  };
 
   return (
     <ResponsiveChart>
       <ResponsiveContainer>
-        <LineChart data={data} margin={{ top: 10, right: 24, bottom: 10, left: 0 }}>
+        <ComposedChart data={data} margin={{ top: 10, right: compactMode ? 8 : 24, bottom: 10, left: 0 }}>
           <defs>
+            <linearGradient id={`${gradientBaseId}-area`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="var(--brand-accent)" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="var(--brand-accent)" stopOpacity={0} />
+            </linearGradient>
             <linearGradient id={`${gradientBaseId}-positive-negative`} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--brand-accent)" />
               <stop offset={`${zeroOffset * 100}%`} stopColor="var(--brand-accent)" />
@@ -186,11 +220,11 @@ export function PortfolioChart({
             type={xAxisType}
             domain={xAxisType === "number" ? ["dataMin", "dataMax"] : undefined}
             scale={xAxisType === "number" ? "time" : "auto"}
-            tick={{ fontSize: isMobile ? 11 : 12 }}
+            tick={compactMode ? renderCompactXAxisTick : { fontSize: isMobile ? 11 : 12 }}
             tickFormatter={xTickFormatter}
             ticks={xAxisTicks}
             interval={hasCustomTicks ? 0 : tickInterval}
-            minTickGap={isMobile ? 42 : 56}
+            minTickGap={compactMode ? 72 : isMobile ? 42 : 56}
             tickMargin={8}
             height={40}
             allowDuplicatedCategory={false}
@@ -198,7 +232,9 @@ export function PortfolioChart({
           <YAxis
             domain={yAxisDomain}
             ticks={yAxisTicks}
-            tick={{ fontSize: 12 }}
+            width={compactMode ? 30 : undefined}
+            tick={{ fontSize: compactMode ? 9.5 : 12 }}
+            tickMargin={compactMode ? 5 : undefined}
             tickFormatter={yAxisTickFormatter}
           />
           <ReferenceLine y={0} stroke="var(--chart-grid)" strokeDasharray="3 3" />
@@ -221,11 +257,19 @@ export function PortfolioChart({
                 label,
                 payload.map((entry) => ({ payload: entry.payload }))
               );
+              const uniquePayload = payload.filter((entry, idx, entries) => {
+                const key = String(entry.dataKey ?? entry.name ?? idx);
+                return (
+                  entries.findIndex(
+                    (candidate, candidateIdx) => String(candidate.dataKey ?? candidate.name ?? candidateIdx) === key
+                  ) === idx
+                );
+              });
 
               return (
                 <div className="top-movers-tooltip">
                   <div className="top-movers-tooltip-title">{title}</div>
-                  {payload.map((entry, idx) => {
+                  {uniquePayload.map((entry, idx) => {
                     const rawName = entry.name ?? "";
                     const numericValue =
                       typeof entry.value === "number" ? entry.value : Number(entry.value);
@@ -268,10 +312,23 @@ export function PortfolioChart({
               wrapperStyle={isMobile ? { paddingTop: 8, fontSize: 11 } : undefined}
             />
           ) : null}
+          {areaCurrency ? (
+            <Area
+              type="monotone"
+              dataKey={areaCurrency}
+              name={seriesLabel(areaCurrency)}
+              stroke="none"
+              fill={`url(#${gradientBaseId}-area)`}
+              fillOpacity={1}
+              activeDot={false}
+              dot={false}
+              isAnimationActive={false}
+            />
+          ) : null}
           {currencies.map((currency) => (
             <Line
               key={currency}
-              type="monotone"
+              type={currency === "Invested" ? "stepAfter" : "monotone"}
               dataKey={currency}
               name={seriesLabel(currency)}
               stroke={
@@ -283,11 +340,26 @@ export function PortfolioChart({
               }
               strokeWidth={2}
               strokeDasharray={currency === "Invested" ? "4 4" : undefined}
-              dot={false}
+              dot={(props: any) => {
+                if (!showLastPointDot || currency !== areaCurrency) return <g />;
+                const pointPayload = props?.payload as PortfolioChartPoint | undefined;
+                if (!pointPayload || pointPayload !== lastPoint) return <g />;
+                if (typeof lastPointValue !== "number" || !Number.isFinite(lastPointValue)) return <g />;
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={4}
+                    fill="var(--brand-accent)"
+                    stroke="var(--surface)"
+                    strokeWidth={2}
+                  />
+                );
+              }}
               activeDot={{ r: 4 }}
             />
           ))}
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
     </ResponsiveChart>
   );

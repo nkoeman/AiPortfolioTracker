@@ -66,30 +66,20 @@ export function ChatOverlay({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <section
-        className="chat-overlay-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="portfolio-assistant-title"
-      >
+      <section className="chat-overlay-panel" role="dialog" aria-modal="true" aria-labelledby="portfolio-assistant-title">
         <header className="chat-overlay-header">
           <h3 id="portfolio-assistant-title">Your portfolio assistant</h3>
           <div className="chat-overlay-actions">
             <button
               type="button"
-              className="secondary chat-overlay-clear"
+              className="btn btn-sm chat-overlay-clear"
               onClick={onClearHistory}
               aria-label="Clear chat history"
               disabled={!messages.length}
             >
               Clear
             </button>
-            <button
-              type="button"
-              className="secondary chat-overlay-close-icon"
-              onClick={onClose}
-              aria-label="Close chat"
-            >
+            <button type="button" className="btn chat-overlay-close-icon" onClick={onClose} aria-label="Close chat">
               ×
             </button>
           </div>

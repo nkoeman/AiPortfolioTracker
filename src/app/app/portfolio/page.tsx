@@ -8,11 +8,13 @@ import {
   OpenPositionsTotals
 } from "@/components/OpenPositionsTable";
 import { PortfolioExposureCharts } from "@/components/PortfolioExposureCharts";
+import { PortfolioSetupScreen } from "@/components/PortfolioSetupScreen";
 import { PageContainer } from "@/components/layout/PageContainer";
 import { Section } from "@/components/layout/Section";
 import { Card } from "@/components/layout/Card";
 import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { getFxRateForWeek } from "@/lib/fx/convert";
+import { getPortfolioSetupStatus, shouldBlockPortfolioAnalytics } from "@/lib/portfolio/setupStatus";
 import { prisma } from "@/lib/prisma";
 
 type SortKey =
@@ -73,7 +75,8 @@ function buildClosedPositions(
     price: unknown;
     valueEur: unknown;
     instrument: { name: string; displayName: string | null; isin: string };
-  }>
+  }>,
+  pricedInstrumentIds: Set<string>
 ): ClosedPositionRow[] {
   const map = new Map<
     string,
@@ -148,7 +151,8 @@ function buildClosedPositions(
         sellProceedsEur: row.sellProceedsEur,
         pnl,
         pnlPct,
-        closedAt: row.lastTradeAt
+        closedAt: row.lastTradeAt,
+        priceAvailabilityMessage: pricedInstrumentIds.has(instrumentId) ? null : "No prices available"
       };
     })
     .sort((a, b) => b.closedAt.getTime() - a.closedAt.getTime());
@@ -161,6 +165,15 @@ export default async function PortfolioPage({
 }) {
   const user = await getCurrentAppUser();
   if (!user) redirect("/sign-in");
+
+  const setupStatus = await getPortfolioSetupStatus(user.id);
+  if (shouldBlockPortfolioAnalytics(setupStatus)) {
+    return (
+      <PageContainer>
+        <PortfolioSetupScreen initialStatus={setupStatus} />
+      </PageContainer>
+    );
+  }
 
   const transactions = await prisma.transaction.findMany({
     where: { userId: user.id },
@@ -176,13 +189,11 @@ export default async function PortfolioPage({
     orderBy: { tradeAt: "asc" }
   });
 
-  const closedPositions = buildClosedPositions(transactions);
-
   if (!transactions.length) {
     return (
       <PageContainer>
         <Section>
-          <Card className="auth-card">
+          <Card>
             <div className="section-title">Portfolio</div>
             <h1>Portfolio</h1>
             <p>No transactions yet. Import your DeGiro CSV to get started.</p>
@@ -229,7 +240,6 @@ export default async function PortfolioPage({
 
   const chosenListingByInstrument = new Map<string, string>();
   const chosenListingIds = new Set<string>();
-  let unmappedCount = 0;
 
   for (const entry of byInstrument.values()) {
     const primaryMapped = entry.listings.find((l) => l.isPrimary && l.mappingStatus === "MAPPED" && l.eodhdCode);
@@ -238,7 +248,6 @@ export default async function PortfolioPage({
 
     const chosen = primaryMapped || fallback || anyMapped || null;
     if (!chosen) {
-      unmappedCount += 1;
       continue;
     }
 
@@ -264,6 +273,16 @@ export default async function PortfolioPage({
     });
     pricesByListing.set(price.listingId, list);
   }
+  const pricedInstrumentIds = new Set<string>();
+  for (const entry of byInstrument.values()) {
+    const listingId = chosenListingByInstrument.get(entry.instrumentId);
+    if (!listingId) continue;
+    if ((pricesByListing.get(listingId)?.length ?? 0) > 0) {
+      pricedInstrumentIds.add(entry.instrumentId);
+    }
+  }
+
+  const closedPositions = buildClosedPositions(transactions, pricedInstrumentIds);
 
   const costBasisEurByInstrument = new Map<string, { buyCostEur: number | null; sellProceedsEur: number | null }>();
 
@@ -329,7 +348,23 @@ export default async function PortfolioPage({
 
   for (const entry of byInstrument.values()) {
     const listingId = chosenListingByInstrument.get(entry.instrumentId);
-    if (!listingId || entry.qty === 0) continue;
+    if (entry.qty === 0) continue;
+
+    if (!listingId) {
+      rows.push({
+        name: entry.name,
+        isin: entry.isin,
+        quantity: entry.qty,
+        latestAdjCloseEur: null,
+        marketValueEur: null,
+        totalPnlEur: null,
+        ytdPnlEur: null,
+        ytdPct: null,
+        profileTags: buildProfileTags(entry.profile),
+        priceAvailabilityMessage: "No prices available"
+      });
+      continue;
+    }
 
     const series = pricesByListing.get(listingId) ?? [];
     const latest = series[series.length - 1] ?? null;
@@ -397,7 +432,8 @@ export default async function PortfolioPage({
       totalPnlEur,
       ytdPnlEur,
       ytdPct,
-      profileTags: buildProfileTags(entry.profile)
+      profileTags: buildProfileTags(entry.profile),
+      priceAvailabilityMessage: latestAdjClose === null ? "No prices available" : null
     });
   }
 
@@ -479,10 +515,17 @@ export default async function PortfolioPage({
     ytdPnlEur: ytdPnlTotalEur,
     ytdPct: ytdPctTotal
   };
+  const noPriceCount = rows.filter((row) => row.priceAvailabilityMessage !== null).length;
 
   return (
     <PageContainer>
       <div className="page-stack">
+        <div className="page-head">
+          <div>
+            <h1 className="page-title">Portfolio</h1>
+          </div>
+        </div>
+
         <Section>
           <Card>
             <PortfolioExposureCharts />
@@ -491,11 +534,11 @@ export default async function PortfolioPage({
 
         <Section>
           <Card>
-            <div className="section-title">Portfolio Drivers</div>
-            <h2>Open Positions</h2>
-            {unmappedCount > 0 ? (
+            <h2 className="card-title">Open positions</h2>
+            {noPriceCount > 0 ? (
               <small className="warning-text">
-                Some instruments could not be mapped; they are excluded from valuation until mapping succeeds automatically.
+                {noPriceCount} position{noPriceCount === 1 ? "" : "s"} currently have no price coverage and are shown as
+                {" "}No prices available.
               </small>
             ) : null}
             <OpenPositionsTable
@@ -511,8 +554,8 @@ export default async function PortfolioPage({
 
         <Section>
           <Card>
-            <div className="section-title">Risk Summary</div>
-            <h2>Closed Positions</h2>
+            <div className="section-title">Realized</div>
+            <h2 className="card-title">Closed positions</h2>
             <ClosedPositionsTable rows={closedPositions} />
           </Card>
         </Section>

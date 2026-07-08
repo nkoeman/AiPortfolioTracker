@@ -71,6 +71,12 @@ export function PortfolioChatWidget() {
   }, [storageKey]);
 
   useEffect(() => {
+    const onOpenChat = () => setOpen(true);
+    window.addEventListener("portfolio-chat:open", onOpenChat);
+    return () => window.removeEventListener("portfolio-chat:open", onOpenChat);
+  }, []);
+
+  useEffect(() => {
     if (!storageKey) return;
     messagesRef.current = messages;
     window.sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-30)));

@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer,
-  BarChart,
+  ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -18,14 +19,17 @@ import { ResponsiveChart } from "@/components/ResponsiveChart";
 export type PortfolioReturnBarPoint = {
   date: string;
   dateMs?: number;
-  Return: number;
+  Return: number | null;
+  CumulativeReturn?: number | null;
   GainEur?: number | null;
+  [key: string]: string | number | null | undefined;
 };
 
 export type ReturnPeriodGranularity = "year" | "month" | "day";
 
 type PortfolioReturnBarChartProps = {
   data: PortfolioReturnBarPoint[];
+  benchmarkLines?: Array<{ key: string; label: string; color: string }>;
   xAxisTickFormatter?: (value: number) => string;
   xAxisTicks?: number[];
   xAxisDomain?: [number, number];
@@ -35,6 +39,7 @@ type PortfolioReturnBarChartProps = {
   xAxisDataKey?: string;
   xAxisType?: "number" | "category";
   showLegend?: boolean;
+  compact?: boolean;
 };
 
 type HoveredPeriod = {
@@ -43,8 +48,25 @@ type HoveredPeriod = {
   y: number;
 };
 
+const TOOLTIP_WIDTH = 236;
+const TOOLTIP_OFFSET = 12;
+const TOOLTIP_MARGIN = 8;
+
 function formatTooltipPercent(value: number) {
-  return `${value.toFixed(2)}%`;
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatAxisPercent(value: number) {
+  const rounded = Math.round(value);
+  if (rounded === 0) return "0%";
+  return `${rounded > 0 ? "+" : ""}${rounded}%`;
+}
+
+function granularityLabel(granularity: ReturnPeriodGranularity) {
+  if (granularity === "day") return "Daily";
+  if (granularity === "year") return "Yearly";
+  return "Monthly";
 }
 
 const eurFormatter = new Intl.NumberFormat("en-GB", {
@@ -77,6 +99,7 @@ function formatPeriodLabel(value: string, granularity: ReturnPeriodGranularity) 
 
 export function PortfolioReturnBarChart({
   data,
+  benchmarkLines = [],
   xAxisTickFormatter,
   xAxisTicks,
   xAxisDomain,
@@ -85,10 +108,12 @@ export function PortfolioReturnBarChart({
   granularity,
   xAxisDataKey = "date",
   xAxisType = "category",
-  showLegend = true
+  showLegend = true,
+  compact = false
 }: PortfolioReturnBarChartProps) {
   const [isMobile, setIsMobile] = useState(false);
   const [hovered, setHovered] = useState<HoveredPeriod | null>(null);
+  const tooltipBoundsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 700px)");
@@ -101,6 +126,7 @@ export function PortfolioReturnBarChart({
   const targetTickCount = isMobile ? 4 : 8;
   const tickInterval = Math.max(0, Math.ceil(data.length / targetTickCount) - 1);
   const hasCustomTicks = Boolean(xAxisTicks?.length);
+  const compactMode = compact || isMobile;
   const barSize = useMemo(() => {
     if (!data.length) return 10;
     if (data.length <= 12) return 12;
@@ -122,14 +148,64 @@ export function PortfolioReturnBarChart({
     if (!Number.isFinite(numeric)) return String(value);
     return xAxisTickFormatter(numeric);
   };
+  const renderCompactXAxisTick = (props: any) => {
+    const { x, y, payload } = props;
+    const value = typeof payload?.value === "number" ? payload.value : Number(payload?.value);
+    const label = Number.isFinite(value) ? xTickFormatter(value) : "";
+    if (!label) return <g />;
+
+    const firstTick = xAxisTicks?.[0];
+    const lastTick = xAxisTicks?.[xAxisTicks.length - 1];
+    const anchor =
+      value === firstTick
+        ? "start"
+        : value === lastTick
+          ? "end"
+          : "middle";
+
+    return (
+      <text x={x} y={y + 12} textAnchor={anchor} fill="var(--muted-text)" fontSize={9.5}>
+        {label}
+      </text>
+    );
+  };
+  const tooltipStyle = useMemo(() => {
+    if (!hovered) return null;
+    const bounds = tooltipBoundsRef.current?.getBoundingClientRect();
+    const containerWidth = bounds?.width && bounds.width > 0 ? bounds.width : 0;
+    const containerHeight = bounds?.height && bounds.height > 0 ? bounds.height : 0;
+    const shouldFlipLeft = containerWidth > 0 && hovered.x + TOOLTIP_OFFSET + TOOLTIP_WIDTH + TOOLTIP_MARGIN > containerWidth;
+    const preferredLeft = shouldFlipLeft
+      ? hovered.x - TOOLTIP_WIDTH - TOOLTIP_OFFSET
+      : hovered.x + TOOLTIP_OFFSET;
+    const maxLeft = containerWidth > 0 ? containerWidth - TOOLTIP_WIDTH - TOOLTIP_MARGIN : preferredLeft;
+    const left = containerWidth > 0
+      ? Math.max(TOOLTIP_MARGIN, Math.min(preferredLeft, maxLeft))
+      : preferredLeft;
+    const preferredTop = hovered.y - 56;
+    const maxTop = containerHeight > 0 ? containerHeight - 132 - TOOLTIP_MARGIN : preferredTop;
+    const top = containerHeight > 0
+      ? Math.max(TOOLTIP_MARGIN, Math.min(preferredTop, maxTop))
+      : Math.max(TOOLTIP_MARGIN, preferredTop);
+
+    return {
+      position: "absolute" as const,
+      left,
+      top,
+      width: TOOLTIP_WIDTH,
+      minWidth: TOOLTIP_WIDTH,
+      pointerEvents: "none" as const,
+      zIndex: 20
+    };
+  }, [hovered]);
 
   return (
     <ResponsiveChart>
-      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+      <div ref={tooltipBoundsRef} style={{ position: "relative", width: "100%", height: "100%" }}>
         <ResponsiveContainer>
-          <BarChart
+          <ComposedChart
             data={data}
-            margin={{ top: 10, right: 24, bottom: 10, left: 0 }}
+            margin={{ top: 10, right: compactMode ? 8 : 24, bottom: 10, left: 0 }}
             onMouseMove={(
               state: { activeTooltipIndex?: number | null; activeCoordinate?: { x?: number; y?: number } }
             ) => {
@@ -156,11 +232,11 @@ export function PortfolioReturnBarChart({
               type={xAxisType}
               domain={xAxisType === "number" ? (xAxisDomain ?? ["dataMin", "dataMax"]) : undefined}
               scale={xAxisType === "number" ? "time" : "auto"}
-              tick={{ fontSize: isMobile ? 11 : 12 }}
+              tick={compactMode ? renderCompactXAxisTick : { fontSize: isMobile ? 11 : 12 }}
               tickFormatter={xTickFormatter}
               ticks={xAxisTicks}
               interval={hasCustomTicks ? 0 : tickInterval}
-              minTickGap={isMobile ? 42 : 56}
+              minTickGap={compactMode ? 72 : isMobile ? 42 : 56}
               tickMargin={8}
               height={40}
               allowDuplicatedCategory={false}
@@ -168,13 +244,15 @@ export function PortfolioReturnBarChart({
             <YAxis
               domain={yAxisDomain}
               ticks={yAxisTicks}
-              tick={{ fontSize: 12 }}
-              tickFormatter={(value) => `${Math.round(Number(value))}%`}
+              width={compactMode ? 30 : undefined}
+              tick={{ fontSize: compactMode ? 9.5 : 12 }}
+              tickMargin={compactMode ? 5 : undefined}
+              tickFormatter={(value) => formatAxisPercent(Number(value))}
             />
             {activeXValue != null ? (
               <ReferenceLine x={activeXValue} stroke="var(--text)" strokeDasharray="2 2" strokeOpacity={0.6} />
             ) : null}
-            <ReferenceLine y={0} stroke="var(--chart-grid)" strokeDasharray="3 3" />
+            <ReferenceLine y={0} stroke="var(--border-2)" strokeWidth={1} />
             <Tooltip shared cursor={false} content={() => null} />
             {showLegend ? (
               <Legend
@@ -186,37 +264,72 @@ export function PortfolioReturnBarChart({
             ) : null}
             <Bar
               dataKey="Return"
-              name="Return (%)"
+              name={`${granularityLabel(granularity)} return`}
               barSize={barSize}
               radius={[6, 6, 6, 6]}
               activeBar={false}
               isAnimationActive={false}
+              opacity={0.28}
             >
               {data.map((row, idx) => (
                 <Cell
                   key={`${row.date}-${idx}`}
-                  fill={row.Return >= 0 ? "var(--brand-accent)" : "var(--danger)"}
+                  fill={(row.Return ?? 0) >= 0 ? "var(--brand-accent)" : "var(--danger)"}
                 />
               ))}
             </Bar>
-          </BarChart>
+            {benchmarkLines.map((benchmark) => (
+              <Line
+                key={benchmark.key}
+                type="monotone"
+                dataKey={benchmark.key}
+                name={benchmark.label}
+                stroke={benchmark.color}
+                strokeWidth={1.8}
+                strokeDasharray="5 4"
+                dot={false}
+                activeDot={{ r: 3, fill: benchmark.color, stroke: "var(--surface)", strokeWidth: 2 }}
+                isAnimationActive={false}
+                connectNulls
+              />
+            ))}
+            <Line
+              type="monotone"
+              dataKey="CumulativeReturn"
+              name="Cumulative return"
+              stroke="var(--text)"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 4, fill: "var(--text)", stroke: "var(--surface)", strokeWidth: 2 }}
+              isAnimationActive={false}
+              connectNulls
+            />
+          </ComposedChart>
         </ResponsiveContainer>
-        {hoveredPoint ? (
+        {hoveredPoint && tooltipStyle ? (
           <div
-            className="top-movers-tooltip"
-            style={{
-              position: "absolute",
-              left: `${hovered?.x ?? 0}px`,
-              top: `${Math.max(8, (hovered?.y ?? 0) - 56)}px`,
-              transform: "translateX(12px)",
-              pointerEvents: "none",
-              zIndex: 20
-            }}
+            className="top-movers-tooltip portfolio-return-tooltip"
+            style={tooltipStyle}
           >
             <div className="top-movers-tooltip-title">{formatPeriodLabel(hoveredPoint.date, granularity)}</div>
-            <div style={{ color: hoveredPoint.Return >= 0 ? "var(--brand-accent)" : "var(--danger)" }}>
-              Return: {formatTooltipPercent(hoveredPoint.Return)}
-            </div>
+            {typeof hoveredPoint.Return === "number" && Number.isFinite(hoveredPoint.Return) ? (
+              <div style={{ color: hoveredPoint.Return >= 0 ? "var(--brand-accent)" : "var(--danger)" }}>
+                {granularityLabel(granularity)} return: {formatTooltipPercent(hoveredPoint.Return)}
+              </div>
+            ) : null}
+            {typeof hoveredPoint.CumulativeReturn === "number" && Number.isFinite(hoveredPoint.CumulativeReturn) ? (
+              <div style={{ color: "var(--text)" }}>
+                Cumulative return: {formatTooltipPercent(hoveredPoint.CumulativeReturn)}
+              </div>
+            ) : null}
+            {benchmarkLines.map((benchmark) => {
+              const value = hoveredPoint[benchmark.key];
+              return typeof value === "number" && Number.isFinite(value) ? (
+                <div key={benchmark.key} style={{ color: benchmark.color }}>
+                  {benchmark.label}: {formatTooltipPercent(value)}
+                </div>
+              ) : null;
+            })}
             <div style={{ color: (hoveredPoint.GainEur ?? 0) >= 0 ? "var(--brand-accent)" : "var(--danger)" }}>
               {(hoveredPoint.GainEur ?? 0) < 0 ? "Value lost: " : "Value gained: "}
               {typeof hoveredPoint.GainEur === "number" && Number.isFinite(hoveredPoint.GainEur)

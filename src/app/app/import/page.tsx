@@ -1,11 +1,10 @@
 import { redirect } from "next/navigation";
 import { format, startOfDay } from "date-fns";
-import { BrandMotif } from "@/components/BrandMotif";
 import { ManualTransactionButton } from "@/components/ManualTransactionButton";
 import { SyncPricesButton } from "@/components/SyncPricesButton";
+import { ImportDropzoneCard } from "@/components/import/ImportDropzoneCard";
+import { TransactionsTableClient } from "@/components/import/TransactionsTableClient";
 import { PageContainer } from "@/components/layout/PageContainer";
-import { Section } from "@/components/layout/Section";
-import { Card } from "@/components/layout/Card";
 import { getCurrentAppUser } from "@/lib/auth/appUser";
 import { ensureEodhdExchangeDirectoryLoaded } from "@/lib/eodhd/exchanges";
 import { prisma } from "@/lib/prisma";
@@ -16,7 +15,20 @@ function toNumber(value: unknown) {
   return Number(value);
 }
 
-// Renders transaction data update actions, CSV import, and a full transaction overview.
+const quantityFormatter = new Intl.NumberFormat("nl-NL", {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 4
+});
+
+function moneyFormatter(currency: string) {
+  return new Intl.NumberFormat("nl-NL", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
 export default async function TransactionsPage() {
   const user = await getCurrentAppUser();
   if (!user) redirect("/sign-in");
@@ -30,127 +42,105 @@ export default async function TransactionsPage() {
     });
   }
 
-  const transactions = await prisma.transaction.findMany({
-    where: { userId: user.id },
-    select: {
-      id: true,
-      tradeAt: true,
-      quantity: true,
-      price: true,
-      transactionCosts: true,
-      valueEur: true,
-      totalEur: true,
-      currency: true,
-      exchangeCode: true,
-      instrument: {
-        select: {
-          name: true,
-          displayName: true
+  const [transactions, exchanges, latestImport] = await Promise.all([
+    prisma.transaction.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        tradeAt: true,
+        quantity: true,
+        price: true,
+        transactionCosts: true,
+        valueEur: true,
+        totalEur: true,
+        currency: true,
+        exchangeCode: true,
+        instrument: {
+          select: {
+            name: true,
+            displayName: true
+          }
+        }
+      },
+      orderBy: { tradeAt: "desc" }
+    }),
+    prisma.eodhdExchange.findMany({
+      select: {
+        code: true,
+        name: true,
+        country: true,
+        currency: true
+      },
+      orderBy: [{ code: "asc" }]
+    }),
+    prisma.importBatch.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        _count: {
+          select: {
+            transactions: true
+          }
         }
       }
-    },
-    orderBy: { tradeAt: "desc" }
+    })
+  ]);
+
+  const rows = transactions.map((tx) => {
+    const amount = tx.valueEur ?? tx.totalEur;
+    const type = toNumber(tx.quantity) < 0 ? "Sell" : "Buy";
+    const currency = tx.currency || "EUR";
+
+    return {
+      id: tx.id,
+      date: format(startOfDay(tx.tradeAt), "yyyy-MM-dd"),
+      type: type as "Buy" | "Sell",
+      name: tx.instrument.displayName || tx.instrument.name,
+      quantity: quantityFormatter.format(Math.abs(toNumber(tx.quantity))),
+      price: tx.price === null ? "-" : moneyFormatter(currency).format(toNumber(tx.price)),
+      currency,
+      exchangeCode: tx.exchangeCode,
+      amount: amount === null ? "-" : moneyFormatter("EUR").format(toNumber(amount))
+    };
   });
 
-  const exchanges = await prisma.eodhdExchange.findMany({
-    select: {
-      code: true,
-      name: true,
-      country: true,
-      currency: true
-    },
-    orderBy: [{ code: "asc" }]
-  });
+  const latestImportDate = latestImport?.createdAt ? format(latestImport.createdAt, "dd MMM yyyy") : null;
+  const subtitleParts = [
+    `${transactions.length} transaction${transactions.length === 1 ? "" : "s"}`,
+    latestImportDate ? `last import ${latestImportDate}` : "no import yet",
+    "idempotent CSV import"
+  ];
 
   return (
     <PageContainer>
       <div className="page-stack">
-        <Section>
-          <Card className="row">
-            <div>
-              <div className="section-title">Data update</div>
-              <h2>Data update</h2>
-              <small>Run sync jobs to refresh prices and portfolio values.</small>
+        <div className="page-head">
+          <div>
+            <h1 className="page-title">Transactions</h1>
+            <p className="page-sub">{subtitleParts.join(" - ")}</p>
+          </div>
+        </div>
+
+        <div className="import-grid">
+          <ImportDropzoneCard
+            latestImport={{
+              createdAt: latestImport?.createdAt ? latestImport.createdAt.toISOString() : null,
+              fileName: latestImport?.fileName ?? null,
+              importedRows: latestImport?._count.transactions ?? null
+            }}
+          />
+
+          <div className="card sync-status-card">
+            <div className="card-head">
+              <div>
+                <h2 className="card-title">Sync status</h2>
+              </div>
             </div>
             <SyncPricesButton />
-          </Card>
-        </Section>
+          </div>
+        </div>
 
-        <Section>
-          <Card className="import-card">
-            <BrandMotif />
-            <div className="section-title">Transactions</div>
-            <h1>Transactions</h1>
-            <p>
-              Upload your DeGiro transactions export. Supported columns: Datum, Tijd, Product, ISIN, Aantal,
-              Koers, Waarde EUR, Totaal EUR.
-            </p>
-            <form action="/api/import" method="post" encType="multipart/form-data">
-              <label>
-                CSV file
-                <input type="file" name="file" accept=".csv,text/csv" required />
-              </label>
-              <button type="submit">Import</button>
-            </form>
-            <small>
-              Imports are idempotent: duplicate rows (same trade details) will be skipped.
-            </small>
-          </Card>
-        </Section>
-
-        <Section>
-          <Card>
-            <div className="row">
-              <div className="stack-sm">
-                <div className="section-title">Transactions</div>
-                <h2>All Transactions</h2>
-              </div>
-              <ManualTransactionButton exchanges={exchanges} />
-            </div>
-            {!transactions.length ? (
-              <small>No transactions yet.</small>
-            ) : (
-              <div className="table-scroll">
-                <table className="table table-mobile-stack">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Name</th>
-                      <th>Quantity</th>
-                      <th>Price</th>
-                      <th>Currency</th>
-                      <th>Exchange</th>
-                      <th>Costs</th>
-                      <th>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transactions.map((tx) => {
-                      const amount = tx.valueEur ?? tx.totalEur;
-                      const type = toNumber(tx.quantity) < 0 ? "Sell" : "Buy";
-                      return (
-                        <tr key={tx.id}>
-                          <td data-label="Date">{format(startOfDay(tx.tradeAt), "yyyy-MM-dd")}</td>
-                          <td data-label="Type">{type}</td>
-                          <td data-label="Name">{tx.instrument.displayName || tx.instrument.name}</td>
-                          <td data-label="Quantity">{Math.abs(toNumber(tx.quantity)).toFixed(4)}</td>
-                          <td data-label="Price">{tx.price === null ? "-" : toNumber(tx.price).toFixed(4)}</td>
-                          <td data-label="Currency">{tx.currency}</td>
-                          <td data-label="Exchange">{tx.exchangeCode}</td>
-                          <td data-label="Costs">
-                            {tx.transactionCosts === null ? "-" : `${tx.currency} ${toNumber(tx.transactionCosts).toFixed(2)}`}
-                          </td>
-                          <td data-label="Amount">{amount === null ? "-" : `EUR ${toNumber(amount).toFixed(2)}`}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </Section>
+        <TransactionsTableClient rows={rows} actions={<ManualTransactionButton exchanges={exchanges} />} />
       </div>
     </PageContainer>
   );

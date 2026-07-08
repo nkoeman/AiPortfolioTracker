@@ -156,8 +156,9 @@ export function ManualTransactionButton({ exchanges }: ManualTransactionButtonPr
   return (
     <>
       <div className="stack-sm">
-        <button type="button" onClick={openModal} disabled={!exchanges.length}>
-          Add transaction
+        <button type="button" className="btn btn-sm" onClick={openModal} disabled={!exchanges.length}>
+          <span aria-hidden="true">+</span>
+          Manual entry
         </button>
         {message ? <small>{message}</small> : null}
         {!exchanges.length ? <small className="warning-text">No exchanges available. Run exchange sync first.</small> : null}
@@ -176,7 +177,7 @@ export function ManualTransactionButton({ exchanges }: ManualTransactionButtonPr
                 <h3 id="manual-transaction-title">Add transaction</h3>
                 <small>Manual trades keep the current signed-quantity model used across portfolio calculations.</small>
               </div>
-              <button type="button" className="secondary" onClick={closeModal} disabled={submitting}>
+              <button type="button" className="btn btn-sm" onClick={closeModal} disabled={submitting}>
                 Cancel
               </button>
             </div>
@@ -298,10 +299,10 @@ export function ManualTransactionButton({ exchanges }: ManualTransactionButtonPr
               {error ? <small className="warning-text">{error}</small> : null}
 
               <div className="row row-start">
-                <button type="button" className="secondary" onClick={closeModal} disabled={submitting}>
+                <button type="button" className="btn btn-sm" onClick={closeModal} disabled={submitting}>
                   Close
                 </button>
-                <button type="submit" disabled={submitting || !exchanges.length}>
+                <button type="submit" className="btn btn-sm btn-primary" disabled={submitting || !exchanges.length}>
                   {submitting ? "Saving..." : "Save transaction"}
                 </button>
               </div>

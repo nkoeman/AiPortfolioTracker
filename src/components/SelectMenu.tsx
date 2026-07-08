@@ -32,9 +32,7 @@ export function SelectMenu({ id, ariaLabel, value, options, onChange }: SelectMe
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (!target || !rootRef.current) return;
-      if (!rootRef.current.contains(target)) {
-        setOpen(false);
-      }
+      if (!rootRef.current.contains(target)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -86,4 +84,3 @@ export function SelectMenu({ id, ariaLabel, value, options, onChange }: SelectMe
     </div>
   );
 }
-

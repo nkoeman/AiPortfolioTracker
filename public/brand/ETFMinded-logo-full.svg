@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1900 420" role="img" aria-label="ETFMinded logo">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B703A"/>
+      <stop offset="100%" stop-color="#239158"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+  <rect x="28" y="50" width="320" height="320" rx="70" fill="url(#g)" filter="url(#shadow)"/>
+  <text x="188" y="270" text-anchor="middle" font-family="EB Garamond, Georgia, 'Times New Roman', serif" font-size="220" font-weight="700" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="4" paint-order="stroke">E</text>
+  <text x="430" y="268" font-family="EB Garamond, Georgia, 'Times New Roman', serif" font-size="230" font-weight="700">
+    <tspan fill="#121F1B">ETF</tspan><tspan fill="#127E46">Minded</tspan>
+  </text>
+</svg>

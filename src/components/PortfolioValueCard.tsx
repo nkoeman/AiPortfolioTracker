@@ -7,38 +7,50 @@ import {
   type PortfolioReturnBarPoint,
   type ReturnPeriodGranularity
 } from "@/components/PortfolioReturnBarChart";
-import { SelectMenu } from "@/components/SelectMenu";
 import {
   getPerformanceRangeCutoff,
   getPerformanceTimeWindow,
-  PERFORMANCE_RANGE_LABELS,
-  type PerformanceRangeOption,
+  type ExtendedPerformanceRangeOption,
   usesWeeklyGranularity
 } from "@/lib/charts/performanceRange";
 import { computeTimeTicks, type TimeWindow } from "@/lib/charts/timeTicks";
+import type { BenchmarkPriceSeries } from "@/lib/benchmarks/prices";
 
 type PortfolioValueCardProps = {
   dailyValueData: PortfolioChartPoint[];
+  latestCloseDate: string | null;
+  benchmarks?: BenchmarkPriceSeries[];
 };
 
-type RangeOption = PerformanceRangeOption;
-type MetricOption = "value" | "index" | "return" | "returnEur";
+type RangeOption = ExtendedPerformanceRangeOption;
+type MetricOption = "value" | "return";
 
 type TimeAxisConfig = {
   ticks: number[];
   tickFormatter: (value: number) => string;
 };
 
-const RANGE_LABELS = PERFORMANCE_RANGE_LABELS;
-
-const METRIC_LABELS: Record<MetricOption, string> = {
-  value: "Value (EUR)",
-  index: "Index",
-  return: "Return (%)",
-  returnEur: "Return (\u20AC)"
+type PerformanceSummary = {
+  returnPct: number | null;
+  netInvestedEur: number | null;
+  portfolioGainEur: number | null;
+};
+type KpiStripData = {
+  marketValueEur: number | null;
+  todayDeltaEur: number | null;
+  todayDeltaPct: number | null;
+  latestCloseDate: string | null;
+  ytdReturnPct: number | null;
+  ytdReturnEur: number | null;
+  totalReturnPct: number | null;
+  totalReturnEur: number | null;
 };
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const BENCHMARK_COLORS: Record<string, string> = {
+  sp500: "#2f6fd6",
+  ftse_all_world: "#c9761c"
+};
 
 function useObservedWidth<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
@@ -86,16 +98,6 @@ function formatEurThousandsTick(value: number) {
   return `${sign}\u20AC${Math.round(abs / 1000)}K`;
 }
 
-function formatIndexTick(value: number) {
-  if (!Number.isFinite(value)) return "";
-  return Math.round(value).toString();
-}
-
-function formatIndexPoints(value: number, name: string) {
-  const label = name === "Index" ? "Index (points)" : name;
-  return [`${value.toFixed(2)} pts`, label] as [string, string];
-}
-
 const eurFormatter = new Intl.NumberFormat("en-GB", {
   style: "currency",
   currency: "EUR",
@@ -103,20 +105,77 @@ const eurFormatter = new Intl.NumberFormat("en-GB", {
   maximumFractionDigits: 2
 });
 
+const eurNlFormatter = new Intl.NumberFormat("nl-NL", {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const eurNlWholeFormatter = new Intl.NumberFormat("nl-NL", {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0
+});
+
 function formatValueEurPoints(value: number, name: string) {
-  const label = name === "EUR" ? "Value (EUR)" : name === "Invested" ? "Invested" : name;
+  const label =
+    name === "EUR" || name === "Value (EUR)" || name === "Portfolio value"
+      ? "Portfolio value"
+      : name === "Invested"
+        ? "Invested"
+        : name;
   return [eurFormatter.format(value), label] as [string, string];
 }
 
 function formatSignedEur(value: number) {
   if (!Number.isFinite(value)) return "-";
-  if (value > 0) return `+${eurFormatter.format(value)}`;
-  return eurFormatter.format(value);
+  if (value > 0) return `+${eurNlFormatter.format(value)}`;
+  return eurNlFormatter.format(value);
 }
 
 function formatReturnEurPoints(value: number, name: string) {
   const label = name === "ReturnEur" ? "Return (\u20AC)" : name;
   return [formatSignedEur(value), label] as [string, string];
+}
+
+function formatSignedPercent(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "\u2014";
+  const rounded = Number(value.toFixed(2));
+  if (rounded > 0) return `+${rounded.toFixed(2)}%`;
+  return `${rounded.toFixed(2)}%`;
+}
+
+function formatSignedEurForCard(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "\u2014";
+  return formatSignedEur(value);
+}
+
+function formatUnsignedEur(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "\u2014";
+  return eurNlFormatter.format(value);
+}
+
+function formatWholeEur(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return "\u2014";
+  if (value > 0) return `+${eurNlWholeFormatter.format(value)}`;
+  return eurNlWholeFormatter.format(value);
+}
+
+function formatCloseDate(value: string | null) {
+  if (!value) return "\u2014";
+  const date = toDate(value);
+  if (!date) return value;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    timeZone: "UTC"
+  }).format(date);
+}
+
+function todayIsoDateKey() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function toDate(value: string) {
@@ -155,6 +214,19 @@ function computeDomainIncludingZero(data: Array<{ date: string }>, keys: string[
     return [min - delta, max + delta] as [number, number];
   }
   return [min, max] as [number, number];
+}
+
+function computePaddedDomainIncludingZero(data: Array<{ date: string }>, keys: string[], paddingRatio = 0.12) {
+  const domain = computeDomainIncludingZero(data, keys);
+  if (!domain) return undefined;
+  const [min, max] = domain;
+  const span = max - min;
+  if (!Number.isFinite(span) || span <= 0) {
+    const delta = Math.max(1, Math.abs(max) * paddingRatio);
+    return [min - delta, max + delta] as [number, number];
+  }
+  const padding = span * paddingRatio;
+  return [min - padding, max + padding] as [number, number];
 }
 
 function computeNiceStep(rawStep: number) {
@@ -211,6 +283,76 @@ function toIsoDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
+function isWeekday(date: Date) {
+  const day = date.getUTCDay();
+  return day !== 0 && day !== 6;
+}
+
+function previousWeekday(date: Date) {
+  const previous = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  do {
+    previous.setUTCDate(previous.getUTCDate() - 1);
+  } while (!isWeekday(previous));
+  return previous;
+}
+
+function effectiveTradingDate(date: Date) {
+  if (isWeekday(date)) {
+    return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  }
+  return previousWeekday(date);
+}
+
+function findPreviousTradingClosePoint(fullSeries: PortfolioChartPoint[], latest: PortfolioChartPoint) {
+  const latestDate = toDate(latest.date);
+  if (!latestDate) return fullSeries.length > 1 ? fullSeries[fullSeries.length - 2] : null;
+
+  const previousTradingDate = previousWeekday(effectiveTradingDate(latestDate));
+  const previousTradingKey = toIsoDateKey(previousTradingDate);
+  const exactPrevious = fullSeries.find((point) => point.date === previousTradingKey);
+  if (exactPrevious) return exactPrevious;
+
+  for (let idx = fullSeries.length - 2; idx >= 0; idx -= 1) {
+    const pointDate = toDate(fullSeries[idx].date);
+    if (!pointDate) continue;
+    if (pointDate.getTime() <= previousTradingDate.getTime() && isWeekday(pointDate)) {
+      return fullSeries[idx];
+    }
+  }
+
+  return fullSeries.length > 1 ? fullSeries[fullSeries.length - 2] : null;
+}
+
+function findLatestCompletedClosePoint(fullSeries: PortfolioChartPoint[]) {
+  const todayKey = todayIsoDateKey();
+  for (let idx = fullSeries.length - 1; idx >= 0; idx -= 1) {
+    const point = fullSeries[idx];
+    const pointDate = toDate(point.date);
+    if (!pointDate) continue;
+    if (point.date < todayKey && isWeekday(pointDate)) {
+      return point;
+    }
+  }
+  return fullSeries[fullSeries.length - 1] ?? null;
+}
+
+function sumNetExternalFlowsBetween(
+  fullSeries: PortfolioChartPoint[],
+  previous: PortfolioChartPoint,
+  latest: PortfolioChartPoint
+) {
+  const previousDate = toDate(previous.date);
+  const latestDate = toDate(latest.date);
+  if (!previousDate || !latestDate) return 0;
+
+  return fullSeries.reduce((sum, point) => {
+    const pointDate = toDate(point.date);
+    if (!pointDate) return sum;
+    if (pointDate.getTime() <= previousDate.getTime() || pointDate.getTime() > latestDate.getTime()) return sum;
+    return sum + (getNumericField(point, "NetExternalFlow") ?? 0);
+  }, 0);
+}
+
 function startOfIsoWeekUtc(date: Date) {
   const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const day = utc.getUTCDay();
@@ -252,11 +394,45 @@ function getReturnGranularityForRange(range: RangeOption): ReturnPeriodGranulari
   return "month";
 }
 
+function granularityLabel(granularity: ReturnPeriodGranularity) {
+  if (granularity === "day") return "Daily";
+  if (granularity === "year") return "Yearly";
+  return "Monthly";
+}
+
+function formatCompactMonthYear(value: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const month = new Intl.DateTimeFormat("en-GB", {
+    month: "short",
+    timeZone: "UTC"
+  }).format(date);
+  const year = new Intl.DateTimeFormat("en-GB", {
+    year: "2-digit",
+    timeZone: "UTC"
+  }).format(date);
+  return `${month} '${year}`;
+}
+
+function buildCompactTimeAxisConfig(sorted: number[]): TimeAxisConfig {
+  const first = sorted[0];
+  const middle = sorted[Math.floor((sorted.length - 1) / 2)];
+  const last = sorted[sorted.length - 1];
+  const ticks = Array.from(new Set([first, middle, last])).sort((a, b) => a - b);
+  const labelByValue = new Map(ticks.map((tick) => [tick, formatCompactMonthYear(tick)] as const));
+
+  return {
+    ticks,
+    tickFormatter: (value: number) => labelByValue.get(value) ?? ""
+  };
+}
+
 function buildTimeAxisConfig(
   data: Array<{ date: string; dateMs?: number }>,
   window: TimeWindow,
   chartWidthPx: number,
-  axisRangeSource?: Array<{ date: string; dateMs?: number }>
+  axisRangeSource?: Array<{ date: string; dateMs?: number }>,
+  compact = false
 ): TimeAxisConfig | undefined {
   const source = axisRangeSource && axisRangeSource.length ? axisRangeSource : data;
   if (!source.length) return undefined;
@@ -271,6 +447,7 @@ function buildTimeAxisConfig(
     .sort((a, b) => a - b);
 
   if (!sorted.length) return undefined;
+  if (compact) return buildCompactTimeAxisConfig(sorted);
 
   const startDate = new Date(sorted[0]);
   const endDate = new Date(sorted[sorted.length - 1]);
@@ -318,9 +495,8 @@ function getPeriodMeta(date: Date, granularity: ReturnPeriodGranularity) {
 
   if (granularity === "year") {
     const startDate = `${year}-01-01`;
-    const startMs = Date.UTC(year, 0, 1);
     const anchorMs = Date.UTC(year, 5, 30, 12, 0, 0, 0);
-    return { key: String(year), startDate, startMs, anchorMs };
+    return { key: String(year), startDate, anchorMs };
   }
 
   if (granularity === "month") {
@@ -329,7 +505,7 @@ function getPeriodMeta(date: Date, granularity: ReturnPeriodGranularity) {
     const nextStartMs = Date.UTC(year, monthIdx + 1, 1);
     const anchorMs = startMs + Math.floor((nextStartMs - startMs) / 2);
     const startDate = `${year}-${month}-01`;
-    return { key: `${year}-${month}`, startDate, startMs, anchorMs };
+    return { key: `${year}-${month}`, startDate, anchorMs };
   }
 
   const startDate = `${year}-${month}-${day}`;
@@ -337,12 +513,118 @@ function getPeriodMeta(date: Date, granularity: ReturnPeriodGranularity) {
   return {
     key: `${year}-${month}-${day}`,
     startDate,
-    startMs,
     anchorMs: startMs
   };
 }
 
-function getNumericField(point: PortfolioChartPoint, key: "EUR" | "Invested" | "PeriodReturnPct") {
+function getPeriodEndDate(date: Date, granularity: ReturnPeriodGranularity) {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  if (granularity === "year") {
+    return new Date(Date.UTC(year, 11, 31));
+  }
+
+  if (granularity === "month") {
+    return new Date(Date.UTC(year, month + 1, 0));
+  }
+
+  return new Date(Date.UTC(year, month, day));
+}
+
+function benchmarkDataKey(id: string) {
+  return `Benchmark_${id.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+}
+
+function findFirstBenchmarkCloseAtOrAfter(
+  prices: Array<{ date: Date; close: number }>,
+  startDate: Date
+) {
+  return prices.find((point) => point.date.getTime() >= startDate.getTime() && point.close > 0) ?? null;
+}
+
+function findLastBenchmarkCloseAtOrBefore(
+  prices: Array<{ date: Date; close: number }>,
+  targetDate: Date
+) {
+  for (let idx = prices.length - 1; idx >= 0; idx -= 1) {
+    const point = prices[idx];
+    if (point.date.getTime() <= targetDate.getTime() && point.close > 0) {
+      return point;
+    }
+  }
+  return null;
+}
+
+function buildBenchmarkReturnData(
+  returnSeries: PortfolioReturnBarPoint[],
+  benchmarks: BenchmarkPriceSeries[],
+  activeBenchmarkIds: string[],
+  granularity: ReturnPeriodGranularity,
+  startDate: Date | null
+) {
+  const activeIds = new Set(activeBenchmarkIds);
+  const benchmarkLines: Array<{ key: string; label: string; color: string }> = [];
+  const data = returnSeries.map((point) => ({ ...point }));
+
+  if (!startDate || !returnSeries.length || !benchmarks.length || !activeIds.size) {
+    return { data, benchmarkLines };
+  }
+
+  for (const benchmark of benchmarks) {
+    if (!activeIds.has(benchmark.id)) continue;
+
+    const prices = benchmark.prices
+      .map((price) => {
+        const parsed = toDate(price.date);
+        if (!parsed || !Number.isFinite(price.close) || price.close <= 0) return null;
+        return { date: parsed, close: price.close };
+      })
+      .filter((price): price is { date: Date; close: number } => price !== null)
+      .sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    const base = findFirstBenchmarkCloseAtOrAfter(prices, startDate);
+    if (!base) continue;
+
+    const key = benchmarkDataKey(benchmark.id);
+    let hasValues = false;
+
+    for (const point of data) {
+      if (point.IsReturnAnchor === 1) {
+        point[key] = 0;
+        hasValues = true;
+        continue;
+      }
+      const pointDate = toDate(point.date);
+      if (!pointDate) continue;
+      const targetDate = getPeriodEndDate(pointDate, granularity);
+      const close = findLastBenchmarkCloseAtOrBefore(prices, targetDate);
+      if (!close || close.date.getTime() < base.date.getTime()) {
+        point[key] = null;
+        continue;
+      }
+
+      point[key] = Number(((close.close / base.close - 1) * 100).toFixed(6));
+      hasValues = true;
+    }
+
+    if (hasValues) {
+      benchmarkLines.push({
+        key,
+        label: benchmark.label,
+        color: BENCHMARK_COLORS[benchmark.id] ?? "var(--muted-text)"
+      });
+    }
+  }
+
+  return { data, benchmarkLines };
+}
+
+function getNumericField(
+  point: PortfolioChartPoint,
+  key: "EUR" | "Invested" | "PeriodReturnPct" | "NetExternalFlow" | "ReturnEur"
+) {
   const raw = point[key];
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
@@ -353,6 +635,19 @@ function buildReturnSeries(
 ): PortfolioReturnBarPoint[] {
   const sorted = sortByDateAsc(source);
   if (!sorted.length) return [];
+  let cumulativeGrowth = 1;
+  let hasCumulativeReturnData = false;
+  const firstDate = toDate(sorted[0].date);
+  const anchorPoint: PortfolioReturnBarPoint | null = firstDate
+    ? {
+        date: sorted[0].date,
+        dateMs: firstDate.getTime(),
+        Return: null,
+        CumulativeReturn: 0,
+        GainEur: null,
+        IsReturnAnchor: 1
+      }
+    : null;
 
   const withDailyOrganic = sorted.map((point, idx) => {
     const value = getNumericField(point, "EUR");
@@ -373,23 +668,35 @@ function buildReturnSeries(
   });
 
   if (granularity === "day") {
-    const dailyPoints: PortfolioReturnBarPoint[] = [];
-    for (const { point, organicGainEur } of withDailyOrganic) {
+    const dailyPoints: PortfolioReturnBarPoint[] = anchorPoint ? [anchorPoint] : [];
+    for (const [index, { point, organicGainEur }] of withDailyOrganic.entries()) {
+      if (index === 0) continue;
       const raw = getNumericField(point, "PeriodReturnPct");
       if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
       const parsed = toDate(point.date);
       if (!parsed) continue;
+
+      if (!hasCumulativeReturnData) {
+        cumulativeGrowth = 1;
+        hasCumulativeReturnData = true;
+      } else {
+        cumulativeGrowth *= 1 + raw / 100;
+      }
+
       dailyPoints.push({
         date: point.date,
         dateMs: parsed.getTime(),
         Return: Number(raw.toFixed(6)),
+        CumulativeReturn: hasCumulativeReturnData
+          ? Number(((cumulativeGrowth - 1) * 100).toFixed(6))
+          : null,
         GainEur: organicGainEur
       });
     }
     return dailyPoints;
   }
 
-  const points: PortfolioReturnBarPoint[] = [];
+  const points: PortfolioReturnBarPoint[] = anchorPoint ? [anchorPoint] : [];
   let activeKey: string | null = null;
   let activeDate = "";
   let activeDateMs = 0;
@@ -397,6 +704,7 @@ function buildReturnSeries(
   let hasReturnData = false;
   let organicGainEurTotal = 0;
   let hasOrganicGain = false;
+  let activeCumulativeReturn: number | null = null;
 
   const flush = () => {
     if (!activeKey || !hasReturnData) return;
@@ -404,6 +712,7 @@ function buildReturnSeries(
       date: activeDate,
       dateMs: activeDateMs,
       Return: Number(((compoundedGrowth - 1) * 100).toFixed(6)),
+      CumulativeReturn: activeCumulativeReturn,
       GainEur: hasOrganicGain ? Number(organicGainEurTotal.toFixed(2)) : null
     });
   };
@@ -423,12 +732,22 @@ function buildReturnSeries(
       hasReturnData = false;
       organicGainEurTotal = 0;
       hasOrganicGain = false;
+      activeCumulativeReturn = null;
     }
 
     const raw = getNumericField(point, "PeriodReturnPct");
     if (typeof raw !== "number" || !Number.isFinite(raw)) continue;
+
+    if (!hasCumulativeReturnData) {
+      cumulativeGrowth = 1;
+      hasCumulativeReturnData = true;
+    } else {
+      cumulativeGrowth *= 1 + raw / 100;
+    }
+
     compoundedGrowth *= 1 + raw / 100;
     hasReturnData = true;
+    activeCumulativeReturn = Number(((cumulativeGrowth - 1) * 100).toFixed(6));
 
     if (typeof row.organicGainEur === "number" && Number.isFinite(row.organicGainEur)) {
       organicGainEurTotal += row.organicGainEur;
@@ -440,33 +759,147 @@ function buildReturnSeries(
   return points;
 }
 
-function buildCumulativeReturnEurSeries(source: PortfolioChartPoint[]) {
-  const sorted = sortByDateAsc(source);
-  const points = sorted
-    .map((point) => {
-      const raw = point.ReturnEur;
-      if (typeof raw !== "number" || !Number.isFinite(raw)) return null;
-      const parsed = toDate(point.date);
-      if (!parsed) return null;
-      return { date: point.date, dateMs: parsed.getTime(), ReturnEur: raw };
-    })
-    .filter((point): point is { date: string; dateMs: number; ReturnEur: number } => point !== null);
+function computePerformanceSummary(rangeSeries: PortfolioChartPoint[]): PerformanceSummary {
+  if (!rangeSeries.length) {
+    return { returnPct: null, netInvestedEur: null, portfolioGainEur: null };
+  }
 
-  if (!points.length) return [] as PortfolioChartPoint[];
-  const baseline = points[0].ReturnEur;
+  const startPoint = rangeSeries[0];
+  const endPoint = rangeSeries[rangeSeries.length - 1];
+  const startValue = getNumericField(startPoint, "EUR");
+  const endValue = getNumericField(endPoint, "EUR");
 
-  return points.map((point) => ({
-    date: point.date,
-    dateMs: point.dateMs,
-    ReturnEur: Number((point.ReturnEur - baseline).toFixed(8))
-  }));
+  let growth = 1;
+  let hasReturnData = false;
+  for (const point of rangeSeries) {
+    const periodPct = getNumericField(point, "PeriodReturnPct");
+    if (periodPct === null) continue;
+    growth *= 1 + periodPct / 100;
+    hasReturnData = true;
+  }
+  const returnPct = hasReturnData ? Number(((growth - 1) * 100).toFixed(6)) : null;
+
+  const netExternalFlows = rangeSeries
+    .map((point) => getNumericField(point, "NetExternalFlow"))
+    .filter((value): value is number => value !== null);
+  const netInvestedEur =
+    netExternalFlows.length > 0
+      ? Number((-netExternalFlows.reduce((total, value) => total + value, 0)).toFixed(8))
+      : null;
+
+  const portfolioGainEur =
+    startValue !== null && endValue !== null && netInvestedEur !== null
+      ? Number((endValue - startValue - netInvestedEur).toFixed(8))
+      : null;
+
+  return {
+    returnPct,
+    netInvestedEur,
+    portfolioGainEur
+  };
 }
 
-export function PortfolioValueCard({ dailyValueData }: PortfolioValueCardProps) {
-  const [range, setRange] = useState<RangeOption>("max");
-  const [metric, setMetric] = useState<MetricOption>("value");
+function computeCompoundedReturnPct(series: PortfolioChartPoint[]) {
+  let growth = 1;
+  let hasData = false;
+  for (const point of series) {
+    const periodPct = getNumericField(point, "PeriodReturnPct");
+    if (periodPct === null) continue;
+    growth *= 1 + periodPct / 100;
+    hasData = true;
+  }
+  return hasData ? Number(((growth - 1) * 100).toFixed(6)) : null;
+}
+
+function computeKpiStripData(
+  fullSeries: PortfolioChartPoint[],
+  ytdSeries: PortfolioChartPoint[]
+): KpiStripData {
+  if (!fullSeries.length) {
+    return {
+      marketValueEur: null,
+      todayDeltaEur: null,
+      todayDeltaPct: null,
+      latestCloseDate: null,
+      ytdReturnPct: null,
+      ytdReturnEur: null,
+      totalReturnPct: null,
+      totalReturnEur: null
+    };
+  }
+
+  const latest = findLatestCompletedClosePoint(fullSeries);
+  if (!latest) {
+    return {
+      marketValueEur: null,
+      todayDeltaEur: null,
+      todayDeltaPct: null,
+      latestCloseDate: null,
+      ytdReturnPct: null,
+      ytdReturnEur: null,
+      totalReturnPct: null,
+      totalReturnEur: null
+    };
+  }
+  const previous = findPreviousTradingClosePoint(fullSeries, latest);
+  const marketValueEur = getNumericField(latest, "EUR");
+  const totalReturnEur = getNumericField(latest, "ReturnEur");
+  const completedSeries = fullSeries.filter((point) => point.date <= latest.date);
+  const totalReturnPct = computeCompoundedReturnPct(completedSeries);
+  const ytdSummary = computePerformanceSummary(ytdSeries);
+  const netExternalFlowSincePrevious =
+    previous && marketValueEur !== null ? sumNetExternalFlowsBetween(fullSeries, previous, latest) : 0;
+
+  const todayDeltaEur =
+    previous && marketValueEur !== null
+      ? (() => {
+          const prevValue = getNumericField(previous, "EUR");
+          return prevValue === null
+            ? null
+            : Number((marketValueEur - prevValue + netExternalFlowSincePrevious).toFixed(8));
+        })()
+      : null;
+  const todayDeltaPct =
+    previous && marketValueEur !== null
+      ? (() => {
+          const prevValue = getNumericField(previous, "EUR");
+          if (prevValue === null || prevValue === 0) return null;
+          return Number(
+            (((marketValueEur - prevValue + netExternalFlowSincePrevious) / prevValue) * 100).toFixed(6)
+          );
+        })()
+      : null;
+
+  return {
+    marketValueEur,
+    todayDeltaEur,
+    todayDeltaPct,
+    latestCloseDate: latest.date,
+    ytdReturnPct: ytdSummary.returnPct,
+    ytdReturnEur: ytdSummary.portfolioGainEur,
+    totalReturnPct,
+    totalReturnEur
+  };
+}
+
+export function PortfolioValueCard({
+  dailyValueData,
+  latestCloseDate,
+  benchmarks = []
+}: PortfolioValueCardProps) {
+  const [range, setRange] = useState<RangeOption>("ytd");
+  const [metric, setMetric] = useState<MetricOption>("return");
+  const [activeBenchmarkIds, setActiveBenchmarkIds] = useState<string[]>([]);
   const [chartRef, chartWidth] = useObservedWidth<HTMLDivElement>();
   const effectiveChartWidth = chartWidth > 0 ? chartWidth : 900;
+
+  useEffect(() => {
+    setActiveBenchmarkIds((current) => {
+      const availableIds = benchmarks.map((benchmark) => String(benchmark.id));
+      const availableSet = new Set<string>(availableIds);
+      return current.filter((id) => availableSet.has(id));
+    });
+  }, [benchmarks]);
 
   const sortedDaily = useMemo(
     () => withDateMs(sortByDateAsc(dailyValueData)),
@@ -487,12 +920,19 @@ export function PortfolioValueCard({ dailyValueData }: PortfolioValueCardProps) 
     });
   }, [range, sortedDaily]);
 
+  const ytdSeries = useMemo(() => {
+    if (!sortedDaily.length) return [] as Array<PortfolioChartPoint & { dateMs: number }>;
+    const latestDate = toDate(sortedDaily[sortedDaily.length - 1].date);
+    if (!latestDate) return sortedDaily;
+    const ytdCutoff = getPerformanceRangeCutoff(latestDate, "ytd");
+    return sortedDaily.filter((point) => {
+      const pointDate = toDate(point.date);
+      return pointDate ? pointDate.getTime() >= ytdCutoff.getTime() : false;
+    });
+  }, [sortedDaily]);
+
   const chartWindow = useMemo(() => getPerformanceTimeWindow(range), [range]);
   const valueSeries = useMemo(
-    () => (usesWeeklyGranularity(range) ? toWeeklySeries(rangeSeries) : rangeSeries),
-    [range, rangeSeries]
-  );
-  const indexSeries = useMemo(
     () => (usesWeeklyGranularity(range) ? toWeeklySeries(rangeSeries) : rangeSeries),
     [range, rangeSeries]
   );
@@ -502,172 +942,269 @@ export function PortfolioValueCard({ dailyValueData }: PortfolioValueCardProps) 
     () => buildReturnSeries(rangeSeries, returnGranularity),
     [rangeSeries, returnGranularity]
   );
-  const returnEurSeries = useMemo(
-    () => buildCumulativeReturnEurSeries(rangeSeries),
-    [rangeSeries]
+  const returnStartDate = useMemo(() => {
+    const first = rangeSeries[0];
+    return first ? toDate(first.date) : null;
+  }, [rangeSeries]);
+  const benchmarkReturn = useMemo(
+    () => buildBenchmarkReturnData(returnSeries, benchmarks, activeBenchmarkIds, returnGranularity, returnStartDate),
+    [activeBenchmarkIds, benchmarks, returnGranularity, returnSeries, returnStartDate]
   );
-  const returnEurDisplaySeries = useMemo(
-    () => (usesWeeklyGranularity(range) ? toWeeklySeries(returnEurSeries) : returnEurSeries),
-    [range, returnEurSeries]
+  const summary = useMemo(() => computePerformanceSummary(rangeSeries), [rangeSeries]);
+  const kpiData = useMemo(
+    () => computeKpiStripData(sortedDaily, ytdSeries),
+    [sortedDaily, ytdSeries]
   );
+  const compactValueChart = effectiveChartWidth <= 640;
 
   const valueAxis = useMemo(
-    () => buildTimeAxisConfig(valueSeries, chartWindow, effectiveChartWidth),
-    [valueSeries, chartWindow, effectiveChartWidth]
-  );
-  const indexAxis = useMemo(
-    () => buildTimeAxisConfig(indexSeries, chartWindow, effectiveChartWidth),
-    [indexSeries, chartWindow, effectiveChartWidth]
+    () => buildTimeAxisConfig(valueSeries, chartWindow, effectiveChartWidth, undefined, compactValueChart),
+    [valueSeries, chartWindow, effectiveChartWidth, compactValueChart]
   );
   const returnAxis = useMemo(
-    () => buildTimeAxisConfig(returnSeries, chartWindow, effectiveChartWidth, rangeSeries),
-    [returnSeries, chartWindow, effectiveChartWidth, rangeSeries]
+    () => buildTimeAxisConfig(returnSeries, chartWindow, effectiveChartWidth, rangeSeries, compactValueChart),
+    [returnSeries, chartWindow, effectiveChartWidth, rangeSeries, compactValueChart]
   );
   const returnXAxisDomain = useMemo(
     () => getSeriesBounds(rangeSeries),
     [rangeSeries]
-  );
-  const returnEurAxis = useMemo(
-    () => buildTimeAxisConfig(returnEurDisplaySeries, chartWindow, effectiveChartWidth),
-    [returnEurDisplaySeries, chartWindow, effectiveChartWidth]
   );
 
   const valueDomain = useMemo(
     () => (metric === "value" ? computeValueDomain(valueSeries, ["EUR", "Invested"]) : undefined),
     [metric, valueSeries]
   );
-  const indexDomain = useMemo(
-    () => (metric === "index" ? computeValueDomain(indexSeries, ["Index"]) : undefined),
-    [metric, indexSeries]
-  );
   const returnDomain = useMemo(
-    () => (metric === "return" ? computeDomainIncludingZero(returnSeries, ["Return"]) : undefined),
-    [metric, returnSeries]
-  );
-  const returnEurDomain = useMemo(
     () =>
-      metric === "returnEur"
-        ? computeDomainIncludingZero(returnEurDisplaySeries, ["ReturnEur"])
+      metric === "return"
+        ? computePaddedDomainIncludingZero(benchmarkReturn.data, [
+            "Return",
+            "CumulativeReturn",
+            ...benchmarkReturn.benchmarkLines.map((line) => line.key)
+          ])
         : undefined,
-    [metric, returnEurDisplaySeries]
+    [benchmarkReturn.benchmarkLines, benchmarkReturn.data, metric]
   );
 
   const valueTicks = useMemo(
     () => (metric === "value" ? buildLinearTicks(valueDomain, { targetTicks: 6 }) : undefined),
     [metric, valueDomain]
   );
-  const indexTicks = useMemo(
-    () => (metric === "index" ? buildLinearTicks(indexDomain, { targetTicks: 6 }) : undefined),
-    [metric, indexDomain]
-  );
   const returnYAxisTicks = useMemo(
     () => (metric === "return" ? buildLinearTicks(returnDomain, { targetTicks: 6 }) : undefined),
     [metric, returnDomain]
   );
-  const returnEurTicks = useMemo(
-    () => (metric === "returnEur" ? buildLinearTicks(returnEurDomain, { targetTicks: 6 }) : undefined),
-    [metric, returnEurDomain]
-  );
-
   const hasSeries =
     metric === "return"
       ? returnSeries.length >= 1
-      : metric === "value"
-        ? valueSeries.length >= 2
-        : metric === "index"
-          ? indexSeries.length >= 2
-          : returnEurDisplaySeries.length >= 2;
+      : valueSeries.length >= 2;
+
+  const rangeOptions: Array<{ key: RangeOption; label: string }> = [
+    { key: "1m", label: "1M" },
+    { key: "3m", label: "3M" },
+    { key: "ytd", label: "YTD" },
+    { key: "1y", label: "1Y" },
+    { key: "max", label: "MAX" }
+  ];
+  const metricOptions: Array<{ key: MetricOption; label: string }> = [
+    { key: "return", label: "Return (%)" },
+    { key: "value", label: "Value (\u20AC)" }
+  ];
+  const closeDateLabel = formatCloseDate(kpiData.latestCloseDate ?? latestCloseDate);
+  const toggleBenchmark = (benchmarkId: string) => {
+    setActiveBenchmarkIds((current) =>
+      current.includes(benchmarkId)
+        ? current.filter((id) => id !== benchmarkId)
+        : [...current, benchmarkId]
+    );
+  };
 
   return (
-    <div className="card stack portfolio-performance-card">
-      <div className="row">
-        <div>
-          <div className="section-title">Value Overview</div>
-          <h2>Portfolio performance</h2>
-        </div>
-        <div className="row row-tight portfolio-performance-controls">
-          <div className="minw-160 portfolio-control">
-            <SelectMenu
-              id="portfolio-range"
-              ariaLabel="Range"
-              value={range}
-              options={Object.entries(RANGE_LABELS).map(([value, label]) => ({ value, label }))}
-              onChange={(nextValue) => setRange(nextValue as RangeOption)}
-            />
+    <div className="stack portfolio-performance-card">
+      <div className="kpi-strip">
+        <div className="kpi kpi-hero">
+          <div className="kpi-label">Portfolio value</div>
+          <div className="kpi-value">{formatUnsignedEur(kpiData.marketValueEur)}</div>
+          <div className="kpi-meta">
+            <span className={`delta ${(kpiData.todayDeltaEur || 0) >= 0 ? "pos" : "neg"}`}>
+              {(kpiData.todayDeltaEur || 0) >= 0 ? "\u25B2" : "\u25BC"} {formatSignedEurForCard(kpiData.todayDeltaEur)}{" "}
+              {formatSignedPercent(kpiData.todayDeltaPct)}
+            </span>
+            <span>last close ({closeDateLabel})</span>
           </div>
-          <div className="minw-160 portfolio-control">
-            <SelectMenu
-              id="portfolio-metric"
-              ariaLabel="Metric"
-              value={metric}
-              options={Object.entries(METRIC_LABELS).map(([value, label]) => ({ value, label }))}
-              onChange={(nextValue) => setMetric(nextValue as MetricOption)}
-            />
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Total return</div>
+          <div className={`kpi-value ${(kpiData.totalReturnEur || 0) >= 0 ? "tone-positive" : "tone-negative"}`}>
+            {formatWholeEur(kpiData.totalReturnEur)}
+          </div>
+          <div className="kpi-meta">
+            <span className={`delta ${(kpiData.totalReturnPct || 0) >= 0 ? "pos" : "neg"}`}>
+              {formatSignedPercent(kpiData.totalReturnPct)}
+            </span>
+          </div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-label">Year to date</div>
+          <div className={`kpi-value ${(kpiData.ytdReturnEur || 0) >= 0 ? "tone-positive" : "tone-negative"}`}>
+            {formatWholeEur(kpiData.ytdReturnEur)}
+          </div>
+          <div className="kpi-meta">
+            <span className={`delta ${(kpiData.ytdReturnPct || 0) >= 0 ? "pos" : "neg"}`}>
+              {formatSignedPercent(kpiData.ytdReturnPct)}
+            </span>
           </div>
         </div>
       </div>
-      {hasSeries ? (
-        <div className="portfolio-performance-chart" ref={chartRef}>
-          {metric === "value" ? (
-            <PortfolioChart
-              data={valueSeries}
-              currencies={["EUR", "Invested"]}
-              showLegend={false}
-              valueFormatter={formatValueEurPoints}
-              yAxisDomain={valueDomain}
-              yAxisTicks={valueTicks}
-              yAxisTickFormatter={formatThousandsTick}
-              xAxisType="number"
-              xAxisDataKey="dateMs"
-              xAxisTickFormatter={valueAxis?.tickFormatter}
-              xAxisTicks={valueAxis?.ticks}
-            />
-          ) : metric === "index" ? (
-            <PortfolioChart
-              data={indexSeries}
-              currencies={["Index"]}
-              showLegend={false}
-              valueFormatter={formatIndexPoints}
-              yAxisTickFormatter={formatIndexTick}
-              yAxisDomain={indexDomain}
-              yAxisTicks={indexTicks}
-              xAxisType="number"
-              xAxisDataKey="dateMs"
-              xAxisTickFormatter={indexAxis?.tickFormatter}
-              xAxisTicks={indexAxis?.ticks}
-            />
-          ) : metric === "returnEur" ? (
-            <PortfolioChart
-              data={returnEurDisplaySeries}
-              currencies={["ReturnEur"]}
-              showLegend={false}
-              valueFormatter={formatReturnEurPoints}
-              yAxisTickFormatter={formatEurThousandsTick}
-              yAxisDomain={returnEurDomain}
-              yAxisTicks={returnEurTicks}
-              xAxisType="number"
-              xAxisDataKey="dateMs"
-              xAxisTickFormatter={returnEurAxis?.tickFormatter}
-              xAxisTicks={returnEurAxis?.ticks}
-            />
-          ) : (
-            <PortfolioReturnBarChart
-              data={returnSeries}
-              showLegend={false}
-              xAxisType="number"
-              xAxisDataKey="dateMs"
-              xAxisTickFormatter={returnAxis?.tickFormatter}
-              xAxisTicks={returnAxis?.ticks}
-              xAxisDomain={returnXAxisDomain}
-              yAxisDomain={returnDomain}
-              yAxisTicks={returnYAxisTicks}
-              granularity={returnGranularity}
-            />
-          )}
+
+      <div className="card stack">
+        <div className="card-head">
+          <div>
+            <h2 className="card-title">Portfolio performance</h2>
+          </div>
+          <div className="row row-tight portfolio-performance-controls">
+            <div className="range-pills" role="tablist" aria-label="Metric">
+              {metricOptions.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={`range-pill${metric === option.key ? " active" : ""}`}
+                  onClick={() => setMetric(option.key)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <div className="range-pills" role="tablist" aria-label="Range">
+              {rangeOptions.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={`range-pill${range === option.key ? " active" : ""}`}
+                  onClick={() => setRange(option.key)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      ) : (
-        <small>Not enough data yet to render this portfolio metric.</small>
-      )}
+
+        {hasSeries ? (
+          <div className="portfolio-performance-chart" ref={chartRef}>
+            {metric === "value" ? (
+              <>
+                <PortfolioChart
+                  data={valueSeries}
+                  currencies={["EUR", "Invested"]}
+                  showLegend={false}
+                  valueFormatter={formatValueEurPoints}
+                  yAxisDomain={valueDomain}
+                  yAxisTicks={valueTicks}
+                  yAxisTickFormatter={formatThousandsTick}
+                  xAxisType="number"
+                  xAxisDataKey="dateMs"
+                  xAxisTickFormatter={valueAxis?.tickFormatter}
+                  xAxisTicks={valueAxis?.ticks}
+                  compact={compactValueChart}
+                  showAreaFill
+                  showLastPointDot
+                />
+                <div className="portfolio-chart-legend" aria-label="Portfolio value chart legend">
+                  <span className="portfolio-chart-legend-item">
+                    <span className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-value" />
+                    Portfolio value
+                  </span>
+                  <span className="portfolio-chart-legend-item">
+                    <span className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-invested" />
+                    Invested
+                  </span>
+                </div>
+              </>
+            ) : (
+              <>
+                <PortfolioReturnBarChart
+                  data={benchmarkReturn.data}
+                  benchmarkLines={benchmarkReturn.benchmarkLines}
+                  showLegend={false}
+                  xAxisType="number"
+                  xAxisDataKey="dateMs"
+                  xAxisTickFormatter={returnAxis?.tickFormatter}
+                  xAxisTicks={returnAxis?.ticks}
+                  xAxisDomain={returnXAxisDomain}
+                  yAxisDomain={returnDomain}
+                  yAxisTicks={returnYAxisTicks}
+                  granularity={returnGranularity}
+                  compact={compactValueChart}
+                />
+                <div className="portfolio-chart-legend portfolio-chart-legend-return" aria-label="Return chart legend">
+                  <span className="portfolio-chart-legend-item">
+                    <span className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-cumulative" />
+                    Cumulative return
+                  </span>
+                  <span className="portfolio-chart-legend-item">
+                    <span className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-gain" />
+                    {granularityLabel(returnGranularity)} gain
+                  </span>
+                  <span className="portfolio-chart-legend-item">
+                    <span className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-loss" />
+                    {granularityLabel(returnGranularity)} loss
+                  </span>
+                  {benchmarkReturn.benchmarkLines.map((line) => (
+                    <span className="portfolio-chart-legend-item" key={line.key}>
+                      <span
+                        className="portfolio-chart-legend-swatch portfolio-chart-legend-swatch-benchmark"
+                        style={{ borderColor: line.color }}
+                      />
+                      {line.label}
+                    </span>
+                  ))}
+                </div>
+                {benchmarks.length ? (
+                  <div className="portfolio-chart-compare" aria-label="Compare benchmarks">
+                    <span className="portfolio-chart-compare-label">Compare</span>
+                    <div className="portfolio-chart-compare-pills">
+                      {benchmarks.map((benchmark) => {
+                        const active = activeBenchmarkIds.includes(benchmark.id);
+                        return (
+                          <button
+                            key={benchmark.id}
+                            type="button"
+                            className={`portfolio-chart-compare-pill${active ? " active" : ""}`}
+                            style={{ "--benchmark-color": BENCHMARK_COLORS[benchmark.id] ?? "var(--muted-text)" } as React.CSSProperties}
+                            onClick={() => toggleBenchmark(benchmark.id)}
+                            aria-pressed={active}
+                          >
+                            <span className="portfolio-chart-compare-dot" aria-hidden="true" />
+                            {benchmark.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : (
+          <small>Not enough data yet to render this portfolio metric.</small>
+        )}
+
+        <div className="portfolio-core-metrics">
+          <div className="metric-tile">
+            <small>Return</small>
+            <div className="metric-emphasis">{formatSignedPercent(summary.returnPct)}</div>
+          </div>
+          <div className="metric-tile">
+            <small>Portfolio gain</small>
+            <div className="metric-emphasis">{formatSignedEurForCard(summary.portfolioGainEur)}</div>
+          </div>
+          <div className="metric-tile market-close-tile">
+            <small>Market close</small>
+            <div className="metric-emphasis">{closeDateLabel}</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

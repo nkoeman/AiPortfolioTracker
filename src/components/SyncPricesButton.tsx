@@ -47,6 +47,7 @@ export function SyncPricesButton() {
     <div className="row row-start">
       <button
         type="button"
+        className="btn btn-sm"
         onClick={() =>
           runSync(
             "/api/sync-prices/recent",
@@ -61,6 +62,7 @@ export function SyncPricesButton() {
       </button>
       <button
         type="button"
+        className="btn btn-sm"
         onClick={() => runSync("/api/sync-prices/full", {}, setFullLoading, "Full sync completed.")}
         disabled={recentLoading || fullLoading || isharesLoading}
       >
@@ -68,6 +70,7 @@ export function SyncPricesButton() {
       </button>
       <button
         type="button"
+        className="btn btn-sm btn-primary"
         onClick={() =>
           runSync(
             "/api/admin/enrich-ishares",

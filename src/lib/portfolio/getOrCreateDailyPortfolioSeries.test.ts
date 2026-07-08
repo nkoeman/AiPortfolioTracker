@@ -375,6 +375,60 @@ describe("getOrCreateDailyPortfolioSeries", () => {
     expect(series.points[2].cumulativeReturnPct).toBeCloseTo(0.21, 8);
   });
 
+  it("excludes unpriced listings from invested capital flows", async () => {
+    mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
+    mocks.externalFlowSeries.mockResolvedValue([]);
+    mocks.transactionFindMany.mockResolvedValue([
+      {
+        instrumentId: "inst_priced",
+        listingId: "lst_priced",
+        tradeAt: new Date("2026-02-01T00:00:00.000Z"),
+        quantity: 1,
+        valueEur: 100,
+        totalEur: 100,
+        instrument: {
+          listings: [{ id: "lst_priced" }]
+        }
+      },
+      {
+        instrumentId: "inst_unpriced",
+        listingId: "lst_unpriced",
+        tradeAt: new Date("2026-02-01T00:00:00.000Z"),
+        quantity: 1,
+        valueEur: 50,
+        totalEur: 50,
+        instrument: {
+          listings: [{ id: "lst_unpriced" }]
+        }
+      }
+    ]);
+
+    mocks.listingFindMany.mockResolvedValue([
+      { id: "lst_priced", isin: "IE0000000001", currency: "EUR" },
+      { id: "lst_unpriced", isin: "IE0000000002", currency: "EUR" }
+    ]);
+
+    mocks.dailyListingPriceFindMany.mockResolvedValue([
+      {
+        listingId: "lst_priced",
+        date: new Date("2026-02-01T00:00:00.000Z"),
+        adjustedClose: 100,
+        close: 100,
+        currency: "EUR"
+      }
+    ]);
+
+    const series = await getOrCreateDailyPortfolioSeries("user_1", {
+      endDate: new Date("2026-02-01T00:00:00.000Z"),
+      days: 1,
+      forceRecompute: true
+    });
+
+    expect(series.points).toHaveLength(1);
+    expect(series.points[0].valueEur).toBe(100);
+    expect(series.points[0].cumulativeReturnAmountEur).toBeCloseTo(0, 8);
+  });
+
   it("returns empty series when no prices exist in range", async () => {
     mocks.dailyPortfolioValueFindMany.mockResolvedValue([]);
     mocks.externalFlowSeries.mockResolvedValue([]);

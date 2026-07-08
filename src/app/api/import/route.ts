@@ -10,7 +10,8 @@ import {
 import { ensureInstrumentProfiles } from "@/lib/enrichment";
 import { enrichInstrumentsFromOpenFigi } from "@/lib/openfigi/enrich";
 import { kickoffIsharesExposureSnapshots } from "@/lib/ishares/ensureIsharesExposure";
-import { syncLast4WeeksForUser } from "@/lib/prices/sync";
+import { syncFullForUser, syncLast4WeeksForUser } from "@/lib/prices/sync";
+import { withSyncLock } from "@/lib/prices/syncLock";
 import { prisma } from "@/lib/prisma";
 import { buildTransactionUniqueKey } from "@/lib/transactions/buildUniqueKey";
 
@@ -50,6 +51,11 @@ export async function POST(req: Request) {
     if (!file) {
       return NextResponse.json({ error: "CSV file is required." }, { status: 400 });
     }
+
+    const existingTransactionCount = await prisma.transaction.count({
+      where: { userId: user.id }
+    });
+    const isInitialImport = existingTransactionCount === 0;
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const csv = buffer.toString("utf8");
@@ -288,7 +294,19 @@ export async function POST(req: Request) {
       new Set(insertableRows.map((row) => row.listingId).filter((id): id is string => Boolean(id)))
     );
 
-    void syncLast4WeeksForUser(user.id).catch((error) => {
+    const lockKey = `price-sync:${user.id}`;
+    void withSyncLock(
+      lockKey,
+      () => (isInitialImport ? syncFullForUser(user.id) : syncLast4WeeksForUser(user.id)),
+      { lockedBy: user.id }
+    ).then((lock) => {
+      if (!lock.acquired) {
+        console.info("[prices.sync] import-triggered sync skipped; sync already running", {
+          userId: user.id,
+          mode: isInitialImport ? "full" : "recent"
+        });
+      }
+    }).catch((error) => {
       console.error("[prices.sync] import-triggered sync failed", { userId: user.id, error });
     });
 
@@ -298,6 +316,8 @@ export async function POST(req: Request) {
       skipped: rows.length - result.count,
       skippedDuplicatesInUpload: duplicateRowsInUpload,
       syncTriggered: true,
+      syncMode: isInitialImport ? "full" : "recent",
+      initialSetup: isInitialImport,
       mappedListings: listingIds.length,
       unmappedRows,
       warning

@@ -1,4 +1,4 @@
-# Portfolio Tracker - Implemented Functionality and Logic
+# ETFMinded - Implemented Functionality and Logic
 
 ## 0. Parallel threads playbook
 Use this section when multiple engineers/agents work at the same time.
@@ -59,9 +59,10 @@ Use this section when multiple engineers/agents work at the same time.
 
 ## 1. What the app does
 The app imports DeGiro transactions, maps instruments to exchange listings, syncs market prices and FX rates, computes portfolio valuation series, and shows portfolio analytics across:
-- `Performance` (`/`)
-- `Portfolio` (`/portfolio`)
-- `Transactions` (`/import`)
+- Public landing page (`/`)
+- `Performance` (`/app`)
+- `Portfolio` (`/app/portfolio`)
+- `Transactions` (`/app/import`)
 
 It also generates a cached AI insights block for the last 4 weeks.
 
@@ -79,10 +80,8 @@ It also generates a cached AI insights block for the last 4 weeks.
 ## 3. Auth and route protection
 
 ### 3.1 Middleware
-`middleware.ts` protects:
-- `/`
-- `/portfolio/:path*`
-- `/import/:path*`
+`src/middleware.ts` protects:
+- `/app/:path*`
 - `/api/:path*`
 
 Unauthenticated users are redirected to Clerk sign-in.
@@ -93,6 +92,8 @@ Pages and API routes also resolve the authenticated user server-side via `getCur
 
 ### 3.3 App shell behavior
 `AppShell` shows sidebar + header for app pages, but hides both on:
+- `/` (public landing page)
+- legacy redirects (`/portfolio`, `/import`)
 - `/login`
 - `/register`
 - `/sign-in`
@@ -100,20 +101,26 @@ Pages and API routes also resolve the authenticated user server-side via `getCur
 
 ## 4. Current pages
 
-### 4.1 `/` (Performance)
-Main performance page with:
-- AI insights card
-- Portfolio value card (range: `Max`, `YTD`, `1Y`, `1M`; metric toggle for value/index/return)
+### 4.1 `/` (Public landing page)
+Public marketing/entry page with:
+- Product positioning and feature overview
+- CTA links to `/sign-in` and `/sign-up`
+
+### 4.2 `/app` (Performance)
+Main authenticated performance page with:
+- Portfolio performance card (default: `Return (%)` + `YTD`; range: `Max`, `YTD`, `1Y`, `3M`, `1M`; metric toggle for value/return)
+- Return chart with periodic return bars, cumulative cashflow-aware return line, and optional global benchmark comparison lines
 - `Gainers & losers` card with timeframe dropdown (`Max`, `YTD`, `1Y`, `1M`) and top contributors chart
 
-### 4.2 `/portfolio` (Portfolio)
+### 4.3 `/app/portfolio` (Portfolio)
 Portfolio composition page with:
 - Top card: `Portfolio exposure` pie chart module (single-chart view switcher: Region / Development / Country / Sector)
 - Open positions overview table
 - Closed positions overview table
 - Server-side sorting support for open positions via query params
+- Positions with missing price coverage remain visible and are labeled `No prices available`
 
-### 4.3 `/import` (Transactions)
+### 4.4 `/app/import` (Transactions)
 Transactions page with:
 - `Data update` section (sync buttons)
 - CSV import form
@@ -124,11 +131,15 @@ Transactions page with:
   - Price
   - Amount (`valueEur` fallback to `totalEur`)
 
-### 4.4 Auth pages
+### 4.5 Auth pages
 - `/login`: backward-compatible redirect to `/sign-in`
 - `/register`: backward-compatible redirect to `/sign-up`
 - `/sign-in`: Clerk sign-in flow (embedded component, no iframe)
 - `/sign-up`: Clerk sign-up flow (embedded component, no iframe)
+
+### 4.6 Legacy route redirects
+- `/portfolio` -> `/app/portfolio` (permanent redirect)
+- `/import` -> `/app/import` (permanent redirect)
 
 ## 5. API endpoints
 - `POST /api/import`: import DeGiro CSV and trigger recent sync
@@ -162,6 +173,7 @@ Transactions page with:
 - `DailyListingPrice` (canonical price cache; unique `(listingId, date)`)
 - `FxRate` (weekly FX cache; unique `(weekEndDate, base, quote)`)
 - `DailyPortfolioValue` (canonical valuation cache; unique `(userId, date)`)
+- Global benchmark ETF prices are cached in `DailyListingPrice` via benchmark `Instrument` / `InstrumentListing` rows; they are not stored per user.
 
 ### 6.4 AI and enrichment
 - `PortfolioAiSummary`
@@ -226,6 +238,12 @@ Important:
 - Includes retry/backoff and small inter-call delay
 - Emits `[DAILY][PRICES]` logs
 
+Benchmark price ingestion:
+- Benchmark ETFs are configured through `BENCHMARK_*` environment variables.
+- Benchmark sync reuses the same EODHD daily adjusted-close fetcher used for normal listings.
+- Missing benchmark ranges are queued in the background from the earliest portfolio-relevant date to the current date.
+- Cached benchmark prices are global app-level data and reused for all users.
+
 ## 11. FX ingestion
 `ensureWeeklyFxRates(...)`:
 - Determines required currencies from mapped listings
@@ -241,6 +259,7 @@ Important:
 - Price selection with carry-forward fallback (lookback window)
 - EUR conversion using FX nearest on/before valuation day
 - `partialValuation=true` when holdings are excluded due to missing price/FX
+- Invested-capital accumulation includes only transactions tied to listings with actual price coverage in the valuation window
 
 Return fields stored:
 - `netExternalFlowEur`
@@ -265,17 +284,28 @@ Return chain continuity:
 
 This derived weekly series is used in runtime reads (charts and recent analytics).
 
-## 14. Performance page logic (`/`)
+## 14. Performance page logic (`/app`)
 
-### 14.1 Portfolio value card
+### 14.1 Portfolio performance card
 - Range toggle:
-  - `Max` -> weekly series (Friday-dated points)
-  - `1Y` -> weekly series (Friday-dated points)
-  - `1M` -> daily series (last month)
-  - `YTD` -> weekly series (Friday-dated points from Jan 1)
+  - `Max` -> yearly return bars and full-history value/return window
+  - `1Y` -> monthly return bars and trailing-year value/return window
+  - `YTD` -> monthly return bars from Jan 1
+  - `3M` -> monthly return bars over the trailing three months
+  - `1M` -> daily return bars over the trailing month
 - Metric toggle:
   - `Value (EUR)` (green value line + dotted invested line)
-  - `Return (%)` (organic return)
+  - `Return (%)` (periodic return bars + cumulative cashflow-aware return line)
+- Initial page-load state is `Return (%)` with the `YTD` timeframe selected.
+- Invested line is derived from canonical valuation (`Invested = EUR - cumulativeReturnAmountEur`) to stay aligned with `DailyPortfolioValue` logic
+- Cumulative portfolio return in the chart is compounded from `periodReturnPct`; it does not use raw portfolio value divided by the first visible portfolio value.
+- The first visible cumulative-return point is initialized at `0%` for the selected chart window.
+- Benchmark comparison is available only in `Return (%)` mode:
+  - `S&P 500` line color: `#2f6fd6`
+  - `FTSE All-World` line color: `#c9761c`
+  - benchmark returns are price-rebased from the first available benchmark close at or after the selected window start
+  - compare pills toggle each benchmark on/off
+- Return chart tooltip is container-clamped and flips left near the right edge to avoid overflow/wrapping.
 
 ### 14.2 Gainers & losers card
 `Gainers & losers` card:
@@ -290,20 +320,21 @@ Server-side movers service behavior:
 - Includes in-flight promise dedupe for concurrent requests with the same cache key
 - Weekly conversion avoids O(n²) date matching by pre-indexing daily rows by date
 
-### 14.3 AI insights card
-- Separate card titled `AI Portfolio insights`
-- Shows one quote-style one-liner + up to 5 bullets
+### 14.3 AI insights
+- AI insights are available on `/app/insights`.
+- The Performance page no longer renders the AI summary card.
 
 ### 14.4 Page-load safeguards
 - Homepage no longer blocks response on synchronous daily valuation backfill when return fields are missing.
 - If a missing cumulative-return segment is detected, a background refresh is queued, while existing `DailyPortfolioValue` rows are rendered immediately.
 
-## 15. Portfolio page logic (`/portfolio`)
+## 15. Portfolio page logic (`/app/portfolio`)
 - Renders `Portfolio exposure` card first, before positions tables
-- Builds open positions from transactions + mapped listings + price/FX data
+- Builds open positions from transactions + mapped listings + price/FX data, while keeping unmapped/unpriced positions visible
 - Calculates market value, total P&L, YTD P&L and YTD%
 - Builds closed positions when net quantity returns to ~0
 - Uses existing table style (`.table`) and server-side sort query params
+- Open and closed positions without price coverage are explicitly labeled `No prices available`
 
 ### 15.1 Portfolio exposure module
 - Fetches `GET /api/portfolio/exposure` and shows one pie chart at a time with dropdown switching:
@@ -316,7 +347,7 @@ Server-side movers service behavior:
 - Handles partial exposure coverage by including a `No data` slice to keep chart totals at 100%
 - Uses normalized exposure snapshots; raw labels remain stored for audit/debug
 
-## 16. Transactions page logic (`/import`)
+## 16. Transactions page logic (`/app/import`)
 - Data update controls:
   - `Sync last 4 weeks`
   - `Full sync`
@@ -341,10 +372,22 @@ Server-side movers service behavior:
 - `CLERK_SECRET_KEY`
 - `NEXT_PUBLIC_CLERK_SIGN_IN_URL` (optional, default `/sign-in`)
 - `NEXT_PUBLIC_CLERK_SIGN_UP_URL` (optional, default `/sign-up`)
-- `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` (optional, default `/`)
-- `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` (optional, default `/`)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL` (optional; set to `/app` for consistency)
+- `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL` (optional; set to `/app` for consistency)
 - `EODHD_API_KEY`
 - `EODHD_BASE_URL` (optional)
+- `BENCHMARK_SP500_ENABLED` (optional, default `false`)
+- `BENCHMARK_SP500_LABEL` (optional, default `S&P 500`)
+- `BENCHMARK_SP500_PROVIDER` (optional, default `eodhd`)
+- `BENCHMARK_SP500_SYMBOL` (optional, default `VUAA.XETRA`)
+- `BENCHMARK_SP500_ISIN` (optional, default `IE00BFMXXD54`)
+- `BENCHMARK_SP500_CURRENCY` (optional, default `EUR`)
+- `BENCHMARK_FTSE_ALL_WORLD_ENABLED` (optional, default `false`)
+- `BENCHMARK_FTSE_ALL_WORLD_LABEL` (optional, default `FTSE All-World`)
+- `BENCHMARK_FTSE_ALL_WORLD_PROVIDER` (optional, default `eodhd`)
+- `BENCHMARK_FTSE_ALL_WORLD_SYMBOL` (optional, default `VWCE.XETRA`)
+- `BENCHMARK_FTSE_ALL_WORLD_ISIN` (optional, default `IE00BK5BQT80`)
+- `BENCHMARK_FTSE_ALL_WORLD_CURRENCY` (optional, default `EUR`)
 - `OPENFIGI_API_KEY`
 - `OPENFIGI_BASE_URL` (optional)
 - `OPENFIGI_ENRICH_TTL_DAYS` (optional)
@@ -354,14 +397,15 @@ Server-side movers service behavior:
 - `OPENAI_TEMPERATURE` (optional, default `0.2`)
 
 ## 19. Notable constraints / caveats
-- `middleware.ts` matcher protects `/`, `/portfolio/*`, `/import/*`, and `/api/*`; server-side guards remain in pages/routes as defense in depth.
-- Position valuation on `/portfolio` currently reads `DailyListingPrice.adjustedClose` for instrument-level metrics.
+- `src/middleware.ts` matcher protects `/app/*` and `/api/*`; server-side guards remain in pages/routes as defense in depth.
+- Position valuation on `/app/portfolio` currently reads `DailyListingPrice.adjustedClose` for instrument-level metrics.
 
 ## 20. Deployment topology (dev vs prod)
 
 ### 20.1 Production (`docker-compose.yml`)
 - Public entrypoint is `caddy` only (ports `80`/`443`).
 - `web` is internal-only (`expose: 3000`, no public `ports` mapping).
+- Runtime environment variables must be listed under `web.environment`; values in `.env` are only visible to the container when explicitly passed through Compose.
 - TLS is managed automatically by Caddy (Let's Encrypt).
 - Domain behavior:
   - `https://www.etfminded.com` redirects to `https://etfminded.com`

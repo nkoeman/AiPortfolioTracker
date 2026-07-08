@@ -1,4 +1,4 @@
-﻿import React from "react";
+import React from "react";
 
 export type WeeklyPortfolioSummary = {
   weekEndDate: string;
@@ -90,164 +90,113 @@ export function PortfolioImpactCard({ payload }: Props) {
   const weekly = Array.isArray(payload.weekly) ? payload.weekly : [];
   const latest = weekly[weekly.length - 1];
   const cumulativeReturn = computeCumulativeReturn(weekly);
-  const { positives, negatives } = splitContributors(
-    Array.isArray(payload.topContributors) ? payload.topContributors : []
-  );
+  const { positives, negatives } = splitContributors(Array.isArray(payload.topContributors) ? payload.topContributors : []);
   const hasWeekly = weekly.length > 0;
 
   return (
-    <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
+    <section className="card stack">
+      <div className="row">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Portfolio impact (last 4 weeks)</h2>
-          <p className="text-sm text-slate-500">As of {formatDate(payload.asOfWeekEndDate)}</p>
+          <h2 className="card-title">Portfolio impact (last 4 weeks)</h2>
+          <p className="card-sub">As of {formatDate(payload.asOfWeekEndDate)}</p>
         </div>
-        <span className="text-xs uppercase tracking-wide text-slate-400">{payload.currency}</span>
+        <span className="section-title">{payload.currency}</span>
       </div>
 
       {hasWeekly ? (
         <>
-          <p className="mt-4 text-sm text-slate-700">
+          <p className="tone-muted">
             From {formatDate(weekly[0].weekEndDate)} to {formatDate(weekly[weekly.length - 1].weekEndDate)}, the
-            portfolio moved from {formatEur(weekly[0].portfolioValueEur)} to {" "}
-            {formatEur(weekly[weekly.length - 1].portfolioValueEur)}.
-            {cumulativeReturn !== null ? ` Cumulative return over the period: ${formatPct(cumulativeReturn)}.` : ""}
+            portfolio moved from {formatEur(weekly[0].portfolioValueEur)} to {formatEur(weekly[weekly.length - 1].portfolioValueEur)}.
+            {cumulativeReturn !== null ? ` Cumulative return: ${formatPct(cumulativeReturn)}.` : ""}
             {latest
-              ? ` In the week ending ${formatDate(latest.weekEndDate)}, the return was ${formatPct(
-                  latest.weeklyReturnPct
-                )} with ${formatEur(latest.weeklyPnLEur)} in weekly P&L.`
+              ? ` Week ending ${formatDate(latest.weekEndDate)} returned ${formatPct(latest.weeklyReturnPct)} with ${formatEur(latest.weeklyPnLEur)} P&L.`
               : ""}
-            {latest?.netFlowEur !== undefined ? ` Net flows for that week were ${formatEur(latest.netFlowEur)}.` : ""}
-            {latest?.fxPnLEur !== undefined ? ` FX impact for that week was ${formatEur(latest.fxPnLEur)}.` : ""}
           </p>
 
-          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-            <div className="grid grid-cols-4 gap-2 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase text-slate-500">
-              <span>Week</span>
-              <span>Return</span>
-              <span>P&amp;L</span>
-              <span>Value</span>
-            </div>
-            <div className="divide-y divide-slate-200">
-              {weekly.map((row) => (
-                <div key={row.weekEndDate} className="grid grid-cols-4 gap-2 px-3 py-2 text-xs sm:text-sm">
-                  <span className="text-slate-700">{formatDate(row.weekEndDate)}</span>
-                  <span className="text-slate-700">{formatPct(row.weeklyReturnPct)}</span>
-                  <span className="text-slate-700">{formatEur(row.weeklyPnLEur)}</span>
-                  <span className="text-slate-700">{formatEur(row.portfolioValueEur)}</span>
-                </div>
-              ))}
-            </div>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Return</th>
+                  <th>P&amp;L</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weekly.map((row) => (
+                  <tr key={row.weekEndDate}>
+                    <td>{formatDate(row.weekEndDate)}</td>
+                    <td>{formatPct(row.weeklyReturnPct)}</td>
+                    <td>{formatEur(row.weeklyPnLEur)}</td>
+                    <td>{formatEur(row.portfolioValueEur)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       ) : (
-        <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          No weekly portfolio data available for the last 4 weeks yet.
-        </div>
+        <small className="warning-text">No weekly portfolio data available for the last 4 weeks yet.</small>
       )}
 
       {payload.notes?.length ? (
-        <ul className="mt-3 space-y-1 text-xs text-amber-700">
+        <ul className="stack-sm">
           {payload.notes.map((note, idx) => (
-            <li key={`${note}-${idx}`} className="rounded-md bg-amber-50 px-2 py-1">
+            <li key={`${note}-${idx}`} className="warning-text">
               {note}
             </li>
           ))}
         </ul>
       ) : null}
 
-      <div className="mt-5">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between">
-          <h3 className="text-base font-semibold text-slate-900">Largest contributors</h3>
-          <span className="text-xs text-slate-500">
+      <div className="stack">
+        <div className="row">
+          <h3 className="card-title">Largest contributors</h3>
+          <span className="card-sub">
             {payload.contributorWindow === "LATEST_WEEK" ? "Latest week" : "Last 4 weeks cumulative"}
           </span>
         </div>
 
         {positives.length === 0 && negatives.length === 0 ? (
-          <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            No contribution data available yet.
-          </div>
+          <small className="warning-text">No contribution data available yet.</small>
         ) : (
-          <div className="mt-3 grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase text-emerald-600">Largest positive contributors</p>
-              {positives.length ? (
-                <div className="space-y-2">
-                  {positives.map((row) => (
-                    <div
-                      key={row.instrumentId}
-                      className="flex items-center justify-between rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900" title={row.instrumentName}>
-                          {truncateLabel(row.instrumentName)}
-                        </p>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {row.assetType ? (
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">
-                              {row.assetType}
-                            </span>
-                          ) : null}
-                          {row.region ? (
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">
-                              {row.region}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-right text-sm font-semibold text-emerald-700">
-                        <div>{formatEur(row.contributionEur)}</div>
-                        <div className="text-xs font-normal text-emerald-700">
-                          {formatPct(row.contributionPctOfPortfolio)}
-                        </div>
-                      </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="stack-sm">
+              <p className="section-title tone-positive">Largest positive contributors</p>
+              {positives.map((row) => (
+                <div key={row.instrumentId} className="card">
+                  <div className="row">
+                    <div>
+                      <p>{truncateLabel(row.instrumentName)}</p>
+                      <small>{[row.assetType, row.region].filter(Boolean).join(" · ")}</small>
                     </div>
-                  ))}
+                    <div className="text-right tone-positive">
+                      <div>{formatEur(row.contributionEur)}</div>
+                      <small>{formatPct(row.contributionPctOfPortfolio)}</small>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-slate-500">No positive contributors reported.</p>
-              )}
+              ))}
             </div>
 
-            <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase text-rose-600">Largest negative contributors</p>
-              {negatives.length ? (
-                <div className="space-y-2">
-                  {negatives.map((row) => (
-                    <div
-                      key={row.instrumentId}
-                      className="flex items-center justify-between rounded-lg border border-rose-100 bg-rose-50 px-3 py-2"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-slate-900" title={row.instrumentName}>
-                          {truncateLabel(row.instrumentName)}
-                        </p>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {row.assetType ? (
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">
-                              {row.assetType}
-                            </span>
-                          ) : null}
-                          {row.region ? (
-                            <span className="rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-600">
-                              {row.region}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-right text-sm font-semibold text-rose-700">
-                        <div>{formatEur(row.contributionEur)}</div>
-                        <div className="text-xs font-normal text-rose-700">
-                          {formatPct(row.contributionPctOfPortfolio)}
-                        </div>
-                      </div>
+            <div className="stack-sm">
+              <p className="section-title tone-negative">Largest negative contributors</p>
+              {negatives.map((row) => (
+                <div key={row.instrumentId} className="card">
+                  <div className="row">
+                    <div>
+                      <p>{truncateLabel(row.instrumentName)}</p>
+                      <small>{[row.assetType, row.region].filter(Boolean).join(" · ")}</small>
                     </div>
-                  ))}
+                    <div className="text-right tone-negative">
+                      <div>{formatEur(row.contributionEur)}</div>
+                      <small>{formatPct(row.contributionPctOfPortfolio)}</small>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-slate-500">No negative contributors reported.</p>
-              )}
+              ))}
             </div>
           </div>
         )}

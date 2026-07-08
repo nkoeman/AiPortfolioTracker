@@ -5,23 +5,40 @@
 export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { AppShell } from "@/components/AppShell";
 
 const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-brand"
+  variable: "--font-sans"
+});
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-display"
+});
+
+const jetBrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono"
 });
 
 export const metadata: Metadata = {
   title: "ETFMinded",
   description: "ETFMinded portfolio intelligence dashboard",
+  manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/brand/ETFMinded_logo_only.png",
-    shortcut: "/brand/ETFMinded_logo_only.png",
-    apple: "/brand/ETFMinded_logo_only.png"
+    icon: [
+      { url: "/favicon.ico", type: "image/x-icon" },
+      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+      { url: "/favicon-48x48.png", sizes: "48x48", type: "image/png" },
+      { url: "/favicon-64x64.png", sizes: "64x64", type: "image/png" }
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png"
   }
 };
 
@@ -29,7 +46,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.variable}>
+      <body className={`${fraunces.variable} ${inter.variable} ${jetBrainsMono.variable}`}>
         <Providers>
           <AppShell>{children}</AppShell>
         </Providers>

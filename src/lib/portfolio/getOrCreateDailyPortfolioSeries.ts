@@ -202,9 +202,12 @@ export async function getOrCreateDailyPortfolioSeries(
     }
   }
 
+  const resolveListingId = (instrumentId: string, listingId: string | null) =>
+    listingId || fallbackListingByInstrument.get(instrumentId) || null;
+
   const holdingsTransactions: HoldingsTx[] = transactions
     .map((tx) => ({
-      listingId: tx.listingId || fallbackListingByInstrument.get(tx.instrumentId) || null,
+      listingId: resolveListingId(tx.instrumentId, tx.listingId),
       date: startOfDay(tx.tradeAt),
       qty: Number(tx.quantity)
     }))
@@ -259,6 +262,10 @@ export async function getOrCreateDailyPortfolioSeries(
     pricesByListing.set(price.listingId, list);
   }
 
+  // Invested capital should only include transactions for listings that have
+  // usable market price coverage in the valuation window.
+  const pricedListingIds = new Set(prices.map((row) => row.listingId));
+
   const requiredCurrencies = Array.from(
     new Set(
       listings
@@ -294,6 +301,10 @@ export async function getOrCreateDailyPortfolioSeries(
   holdingsTransactions.sort((a, b) => a.date.getTime() - b.date.getTime());
   const investmentFlows = transactions
     .map((tx) => {
+      const resolvedListingId = resolveListingId(tx.instrumentId, tx.listingId);
+      if (!resolvedListingId || !pricedListingIds.has(resolvedListingId)) {
+        return null;
+      }
       const raw = toFiniteNumber(tx.valueEur ?? tx.totalEur);
       const absValue = raw === null ? null : Math.abs(raw);
       const qty = toFiniteNumber(tx.quantity);
@@ -304,6 +315,7 @@ export async function getOrCreateDailyPortfolioSeries(
       if (qty < 0) return { date: startOfDay(tx.tradeAt), flow: -absValue };
       return { date: startOfDay(tx.tradeAt), flow: 0 };
     })
+    .filter((flow): flow is { date: Date; flow: number } => flow !== null)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   let txIndex = 0;
   let investmentFlowIndex = 0;
